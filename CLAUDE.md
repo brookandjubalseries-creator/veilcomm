@@ -67,4 +67,11 @@ cargo clippy --all
 - Network layer is implemented: QUIC transport, Kademlia DHT, peer handshake, message relay
 - NAT traversal uses STUN for public address discovery
 - Tor integration is implemented: optional TCP+TLS transport via SOCKS5 proxy for .onion hidden service connections
-- GUI serves a glassmorphism frontend on localhost:3000 via axum
+- Offline messaging via DHT store-and-forward with delivery status tracking
+- Group chat with Signal-style Sender Keys (up to 100 members)
+- Duress password: V2 keystore with two-vault trial decryption, no password hash stored
+- Steganographic transport: BMP LSB encoding (3 bits/pixel) in veilcomm-core/src/steganography.rs
+- Dead man's switch: timed auto-delivery stored in dead_man_switches table
+- LAN mesh discovery: UDP multicast on 239.255.77.67:5367 in veilcomm-network/src/mesh.rs
+- GUI serves a glassmorphism frontend on localhost:3000 via axum with 40+ REST API endpoints
+- 117 tests passing across all crates

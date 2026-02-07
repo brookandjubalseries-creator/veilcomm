@@ -9,5 +9,6 @@
 pub mod crypto;
 pub mod error;
 pub mod protocol;
+pub mod steganography;
 
 pub use error::{Error, Result};

@@ -12,4 +12,6 @@ pub mod keystore;
 
 pub use database::Database;
 pub use error::{Error, Result};
-pub use keystore::KeyStore;
+pub use keystore::{
+    db_filename_from_token, load_keystore, DuressKeyStore, KeyStore, KeyStoreVersion, OpenResult,
+};

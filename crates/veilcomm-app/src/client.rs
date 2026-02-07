@@ -25,8 +25,8 @@ use veilcomm_network::{
 };
 use veilcomm_core::crypto::sender_key::{ReceivedSenderKey, SenderKey};
 use veilcomm_storage::{
-    database::{Contact, Database, StoredGroup, StoredGroupMember, StoredGroupMessage, StoredMessage, StoredSession},
-    keystore::KeyStore,
+    database::{Contact, Database, StoredDeadManSwitch, StoredGroup, StoredGroupMember, StoredGroupMessage, StoredMessage, StoredSession},
+    keystore::{self, DuressKeyStore, KeyStore, KeyStoreVersion},
 };
 
 use crate::error::{Error, Result};
@@ -63,6 +63,14 @@ pub struct VeilCommClient {
     sender_keys: HashMap<String, SenderKey>,
     /// Received sender keys from other group members ((group_id, fingerprint) -> ReceivedSenderKey)
     received_sender_keys: HashMap<(String, String), ReceivedSenderKey>,
+    /// Duress keystore (V2 format, when duress mode is configured)
+    duress_keystore: Option<DuressKeyStore>,
+    /// Whether the current session is using the duress vault
+    is_duress: bool,
+    /// Database token for the active vault (V2 only)
+    db_token: Option<[u8; 32]>,
+    /// Mesh discovery service
+    mesh: Option<veilcomm_network::mesh::MeshDiscovery>,
 }
 
 impl VeilCommClient {
@@ -82,6 +90,10 @@ impl VeilCommClient {
             onion_address: None,
             sender_keys: HashMap::new(),
             received_sender_keys: HashMap::new(),
+            duress_keystore: None,
+            is_duress: false,
+            db_token: None,
+            mesh: None,
         }
     }
 
@@ -136,33 +148,47 @@ impl VeilCommClient {
     }
 
     /// Unlock an existing identity
+    ///
+    /// Auto-detects V1 (standard) vs V2 (duress) keystore format.
+    /// For V2, trial decryption determines which vault the password opens.
     pub fn unlock(&mut self, password: &str) -> Result<String> {
         if !self.is_initialized() {
             return Err(Error::NotInitialized);
         }
 
-        // Load and verify key store
         let keystore_bytes = std::fs::read(self.keystore_path())?;
-        let keystore = KeyStore::from_bytes(&keystore_bytes)?;
-        let identity = keystore.open(password)?;
 
-        // Load pre-keys
-        let signed_prekey = keystore.get_signed_prekey(password)?;
+        match keystore::load_keystore(&keystore_bytes)? {
+            KeyStoreVersion::V1(keystore) => {
+                let identity = keystore.open(password)?;
+                let signed_prekey = keystore.get_signed_prekey(password)?;
+                let database = Database::open(self.database_path())?;
 
-        // Open database
-        let database = Database::open(self.database_path())?;
+                self.identity = Some(identity);
+                self.keystore = Some(keystore);
+                self.database = Some(database);
+                self.signed_prekey = signed_prekey;
+                self.is_duress = false;
+            }
+            KeyStoreVersion::V2(mut dks) => {
+                let result = dks.open(password)?;
+                let signed_prekey = dks.get_signed_prekey(password)?;
 
-        let fingerprint = identity.public_key().fingerprint();
+                // Use db_token to derive database path
+                let db_name = keystore::db_filename_from_token(&result.db_token);
+                let db_path = self.data_dir.join(&db_name);
+                let database = Database::open(&db_path)?;
 
-        self.identity = Some(identity);
-        self.keystore = Some(keystore);
-        self.database = Some(database);
-        self.signed_prekey = signed_prekey;
+                self.identity = Some(result.identity);
+                self.db_token = Some(result.db_token);
+                self.duress_keystore = Some(dks);
+                self.database = Some(database);
+                self.signed_prekey = signed_prekey;
+            }
+        }
 
-        // Load sessions from database
         self.load_sessions()?;
-
-        Ok(fingerprint)
+        self.fingerprint()
     }
 
     /// Get our identity fingerprint
@@ -867,6 +893,191 @@ impl VeilCommClient {
     pub fn network(&self) -> Option<&NetworkService> {
         self.network.as_ref()
     }
+
+    // ─── Duress Password (Decoy Vault) ────────────────────────
+
+    /// Set up duress password mode
+    ///
+    /// Migrates the V1 keystore to V2 dual-vault format. The real vault keeps
+    /// the current identity. A new decoy identity is created for the duress vault.
+    /// Returns the duress vault fingerprint.
+    pub fn setup_duress(&mut self, real_password: &str, duress_password: &str) -> Result<String> {
+        let keystore = self.keystore.as_ref().ok_or(Error::NotInitialized)?;
+
+        let (dks, duress_result) =
+            DuressKeyStore::from_v1(keystore, real_password, duress_password)?;
+
+        // Initialize the duress database with some seed data
+        let db_name = keystore::db_filename_from_token(&duress_result.db_token);
+        let db_path = self.data_dir.join(&db_name);
+        let _duress_db = Database::open(&db_path)?;
+
+        let duress_fingerprint = duress_result.identity.public_key().fingerprint();
+
+        // Save the V2 keystore
+        let dks_bytes = dks.to_bytes()?;
+        std::fs::write(self.keystore_path(), dks_bytes)?;
+
+        // Also initialize the real vault's database under its token
+        // (existing veilcomm.db will be kept as fallback)
+        self.duress_keystore = Some(dks);
+        self.keystore = None; // No longer using V1
+
+        Ok(duress_fingerprint)
+    }
+
+    /// Check if duress mode is configured (V2 keystore exists)
+    pub fn has_duress(&self) -> bool {
+        self.duress_keystore.is_some()
+    }
+
+    /// Remove duress mode, converting back to V1 format
+    pub fn remove_duress(&mut self, password: &str) -> Result<()> {
+        if self.duress_keystore.is_none() {
+            return Ok(());
+        }
+
+        // Re-create V1 keystore from the current identity
+        let _identity = self.identity.as_ref().ok_or(Error::NotInitialized)?;
+        let (keystore, _) = KeyStore::create(password)?;
+
+        // Save V1 format
+        let bytes = keystore.to_bytes()?;
+        std::fs::write(self.keystore_path(), bytes)?;
+
+        self.keystore = Some(keystore);
+        self.duress_keystore = None;
+
+        Ok(())
+    }
+
+    // ─── Dead Man's Switch ──────────────────────────────────
+
+    /// Create a dead man's switch
+    pub fn create_dead_man_switch(
+        &self,
+        recipients: Vec<String>,
+        message: &str,
+        interval_secs: i64,
+    ) -> Result<String> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        let dms = StoredDeadManSwitch {
+            id: id.clone(),
+            recipient_fingerprints: recipients,
+            message: message.to_string(),
+            check_in_interval_secs: interval_secs,
+            last_check_in: now,
+            created_at: now,
+            enabled: true,
+            triggered: false,
+        };
+        db.create_dead_man_switch(&dms)?;
+        Ok(id)
+    }
+
+    /// Check in to reset all dead man's switch timers
+    pub fn dead_man_check_in(&self) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        let switches = db.list_dead_man_switches()?;
+        for dms in switches {
+            if dms.enabled && !dms.triggered {
+                db.check_in_dead_man_switch(&dms.id)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all dead man's switches
+    pub fn list_dead_man_switches(&self) -> Result<Vec<StoredDeadManSwitch>> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.list_dead_man_switches()?)
+    }
+
+    /// Delete a dead man's switch
+    pub fn delete_dead_man_switch(&self, id: &str) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.delete_dead_man_switch(id)?;
+        Ok(())
+    }
+
+    /// Toggle a dead man's switch enabled/disabled
+    pub fn toggle_dead_man_switch(&self, id: &str, enabled: bool) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.toggle_dead_man_switch(id, enabled)?;
+        Ok(())
+    }
+
+    /// Check for expired dead man's switches and return the ones that should trigger
+    pub fn check_expired_switches(&self) -> Result<Vec<StoredDeadManSwitch>> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.get_expired_dead_man_switches()?)
+    }
+
+    /// Mark a dead man's switch as triggered
+    pub fn trigger_dead_man_switch(&self, id: &str) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.trigger_dead_man_switch(id)?;
+        Ok(())
+    }
+
+    // ─── LAN Mesh Discovery ─────────────────────────────────
+
+    /// Start LAN mesh discovery
+    pub async fn start_mesh(&mut self, listen_addr: SocketAddr) -> Result<()> {
+        let node_id = self.derive_node_id()?;
+        let fingerprint = self.fingerprint()?;
+        let name = self.name().unwrap_or(None);
+
+        let mesh = veilcomm_network::mesh::MeshDiscovery::new(
+            node_id,
+            fingerprint,
+            name,
+            listen_addr,
+        );
+        mesh.start().await.map_err(Error::Network)?;
+        self.mesh = Some(mesh);
+        Ok(())
+    }
+
+    /// Stop LAN mesh discovery
+    pub async fn stop_mesh(&mut self) {
+        if let Some(ref mesh) = self.mesh {
+            mesh.stop().await;
+        }
+        self.mesh = None;
+    }
+
+    /// Get discovered LAN peers
+    pub fn mesh_peers(&self) -> Vec<veilcomm_network::mesh::MeshPeer> {
+        if let Some(ref mesh) = self.mesh {
+            mesh.discovered_peers()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Check if mesh discovery is running
+    pub fn is_mesh_running(&self) -> bool {
+        self.mesh.as_ref().map(|m| m.is_running()).unwrap_or(false)
+    }
+
+    // ─── Steganographic Transport ───────────────────────────
+
+    /// Encode an encrypted message payload as a steganographic BMP image
+    pub fn stego_encode(&self, payload: &[u8]) -> Result<Vec<u8>> {
+        Ok(veilcomm_core::steganography::encode(payload))
+    }
+
+    /// Decode a steganographic BMP image back to the encrypted payload
+    pub fn stego_decode(&self, bmp_data: &[u8]) -> Result<Vec<u8>> {
+        veilcomm_core::steganography::decode(bmp_data)
+            .map_err(|e| Error::Crypto(veilcomm_core::Error::Decryption(format!("{}", e))))
+    }
+
+    // ─── Internal Helpers ───────────────────────────────────
 
     fn keystore_path(&self) -> PathBuf {
         self.data_dir.join(KEYSTORE_FILE)

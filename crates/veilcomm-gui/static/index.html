@@ -306,6 +306,40 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
 .avatar-3{background:linear-gradient(135deg, #4a2a1a, #5a3a0d)}
 .avatar-4{background:linear-gradient(135deg, #1a2a4a, #0d3a5a)}
 .avatar-5{background:linear-gradient(135deg, #4a1a3a, #5a0d4a)}
+
+/* ═══ DMS TABLE ═══ */
+.dms-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:260px;overflow-y:auto}
+.dms-item{padding:14px 16px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);transition:var(--transition)}
+.dms-item:hover{background:var(--glass-surface)}
+.dms-item .dms-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.dms-item .dms-msg{font-size:13px;color:var(--ghost);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dms-item .dms-meta{display:flex;align-items:center;gap:12px;font-size:11px;color:var(--iron);font-family:var(--font-mono)}
+.dms-item .dms-actions{display:flex;gap:6px}
+.dms-item .dms-actions button{padding:4px 10px;border-radius:var(--radius-sm);font-size:11px;border:1px solid var(--glass-border);background:var(--glass-bg);color:var(--ghost);cursor:pointer;transition:var(--transition)}
+.dms-item .dms-actions button:hover{background:var(--glass-surface);color:var(--white)}
+.dms-item .dms-actions button.danger{border-color:rgba(239,68,68,0.2);color:var(--danger)}
+.dms-item .dms-actions button.danger:hover{background:rgba(239,68,68,0.15)}
+.dms-checkin-btn{background:linear-gradient(135deg, var(--secure), #059669) !important;color:var(--void) !important;border:none !important;font-weight:600 !important;padding:8px 18px !important;font-size:13px !important}
+.dms-checkin-btn:hover{box-shadow:0 0 16px rgba(16,185,129,0.3) !important}
+
+/* ═══ MESH PEER LIST ═══ */
+.mesh-peer{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);margin-bottom:6px;transition:var(--transition)}
+.mesh-peer:hover{background:var(--glass-surface)}
+.mesh-peer .mesh-dot{width:8px;height:8px;border-radius:50%;background:var(--secure);flex-shrink:0;box-shadow:0 0 8px rgba(16,185,129,0.4)}
+.mesh-peer .mesh-info{flex:1;min-width:0}
+.mesh-peer .mesh-name{font-size:13px;font-weight:500}
+.mesh-peer .mesh-addr{font-size:11px;color:var(--iron);font-family:var(--font-mono)}
+.mesh-empty{text-align:center;padding:20px;font-size:12px;color:var(--iron)}
+
+/* ═══ DURESS SECTION ═══ */
+.duress-status{display:flex;align-items:center;gap:8px;padding:12px 16px;border-radius:var(--radius-sm);margin-bottom:8px}
+.duress-status.active{background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.15);color:var(--secure)}
+.duress-status.inactive{background:var(--glass-bg);border:1px solid var(--glass-border);color:var(--iron)}
+.duress-status .status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+/* ═══ STEGO BADGE ═══ */
+.stego-toggle{padding:6px 10px;border-radius:var(--radius-sm);font-size:11px;font-weight:500;font-family:var(--font-mono);letter-spacing:0.04em;cursor:pointer;transition:var(--transition);border:1px solid var(--glass-border);background:var(--glass-bg);color:var(--iron)}
+.stego-toggle.active{background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.25);color:var(--violet);box-shadow:0 0 12px rgba(168,85,247,0.15)}
 </style>
 </head>
 <body>
@@ -421,6 +455,7 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
           <button onclick="toggleSearch()" title="Search">&#128269;</button>
           <button id="verifyBtn" onclick="openVerify()" title="Verify" style="color:var(--secure)">&#10003;&#10003;</button>
           <button id="groupInfoBtn" onclick="openGroupInfo()" title="Group Info" style="color:var(--violet);display:none">&#9881;</button>
+          <button id="stegoBtn" class="stego-toggle" onclick="toggleStegoMode()" title="Steganographic transport: hide messages in images">STEGO</button>
         </div>
       </div>
       <div class="search-bar" id="searchBar">
@@ -492,6 +527,23 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
           <div class="row"><span class="label">DHT</span><span class="value">Kademlia</span></div>
           <div class="row"><span class="label">Metadata Protection</span><span class="value" id="netTorStatus" style="color:var(--iron)">Disabled</span></div>
         </div>
+        <div class="glass-card net-card">
+          <h3><span class="dot" id="meshDot" style="background:var(--iron)"></span> LAN Mesh</h3>
+          <div class="row"><span class="label">Status</span><span class="value" id="meshStatus">Inactive</span></div>
+          <div class="row"><span class="label">Discovery</span><span class="value">UDP Multicast</span></div>
+          <div class="row"><span class="label">Peers Found</span><span class="value" id="meshPeerCount">0</span></div>
+          <div id="meshPeerList" style="margin-top:12px"></div>
+          <div id="meshControls" style="margin-top:16px">
+            <div class="field">
+              <label>Listen Address</label>
+              <input type="text" id="meshListenAddr" class="glass-input" value="0.0.0.0:4433" placeholder="0.0.0.0:4433">
+            </div>
+            <button class="btn btn-primary btn-full btn-sm" style="margin-top:12px" onclick="startMesh()">Start Mesh Discovery</button>
+          </div>
+          <div id="meshStopBtn" style="display:none;margin-top:16px">
+            <button class="btn btn-danger btn-full btn-sm" onclick="stopMesh()">Stop Mesh</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -534,6 +586,33 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
         <div class="setting-info"><div class="setting-title">Typing Indicators</div><div class="setting-desc">Show when you're typing</div></div>
         <label class="toggle"><input type="checkbox" checked><span class="track"></span><span class="knob"></span></label>
       </div>
+    </div>
+    <div class="settings-section">
+      <div class="section-label">Duress Protection</div>
+      <div id="duressStatus" class="duress-status inactive">
+        <span class="status-dot" style="background:var(--iron)"></span>
+        <span style="font-size:13px">Not configured</span>
+      </div>
+      <div id="duressSetup">
+        <div class="field" style="margin-top:8px">
+          <label>Real Password</label>
+          <input type="password" id="duressRealPw" class="glass-input" placeholder="Your current password">
+        </div>
+        <div class="field">
+          <label>Duress Password</label>
+          <input type="password" id="duressDuressPw" class="glass-input" placeholder="Decoy vault password">
+        </div>
+        <button class="btn btn-primary btn-sm btn-full" onclick="setupDuress()">Enable Duress Vault</button>
+      </div>
+      <div id="duressRemove" style="display:none;margin-top:8px">
+        <button class="btn btn-danger btn-sm btn-full" onclick="removeDuress()">Remove Duress Vault</button>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="section-label">Dead Man's Switch</div>
+      <div id="dmsList" class="dms-list"></div>
+      <button class="dms-checkin-btn btn btn-sm btn-full" onclick="checkInDMS()" style="margin-bottom:8px">Check In (I'm Safe)</button>
+      <button class="btn btn-ghost btn-sm btn-full" onclick="openCreateDMS()">+ Create Switch</button>
     </div>
     <div class="settings-section">
       <div class="section-label">Account</div>
@@ -629,6 +708,33 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
   </div>
 </div>
 
+<!-- CREATE DMS MODAL -->
+<div class="modal-overlay" id="createDmsModal">
+  <div class="glass-card modal">
+    <div class="modal-header">
+      <h2>Create Dead Man's Switch</h2>
+      <button class="close-btn" onclick="closeModal('createDmsModal')">&times;</button>
+    </div>
+    <p class="modal-desc">If you fail to check in within the interval, this message will be sent to the selected recipients automatically.</p>
+    <div class="field">
+      <label>Message</label>
+      <textarea id="dmsMessage" class="glass-input" rows="3" placeholder="Message to send if you don't check in..." style="resize:vertical;font-family:var(--font-body)"></textarea>
+    </div>
+    <div class="field">
+      <label>Check-in Interval (hours)</label>
+      <input type="number" id="dmsInterval" class="glass-input" value="24" min="1" max="8760" placeholder="24">
+    </div>
+    <div class="field">
+      <label>Recipients</label>
+      <div id="dmsRecipientsList"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('createDmsModal')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="createDMS()">Create Switch</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ═══ STATE ═══
 const S = {
@@ -638,7 +744,9 @@ const S = {
   networkStarted: false,
   torEnabled: false, onionAddress: null,
   groups: [], selectedGroup: null,
-  groupMessages: [], isGroupChat: false
+  groupMessages: [], isGroupChat: false,
+  stegoMode: false, meshRunning: false,
+  hasDuress: false, dmsList: []
 };
 
 // ═══ API ═══
@@ -748,6 +856,8 @@ function showApp() {
   updateIdentityUI();
   loadContacts();
   loadGroups();
+  loadDuressStatus();
+  loadDMS();
   startOfflinePolling();
 }
 
@@ -997,6 +1107,7 @@ function switchTab(tab) {
     S.isGroupChat = false;
     renderContacts();
     pollNetworkStatus();
+    loadMeshStatus();
   } else {
     document.getElementById('networkView').style.display = 'none';
     if (S.selectedContact !== null || S.selectedGroup !== null) {
@@ -1282,6 +1393,13 @@ function startOfflinePolling() {
         renderMessages();
       }
     } catch(e) {}
+    // Check for expired DMS
+    try {
+      const expired = await api('GET', '/api/dms/expired');
+      if (expired.length) toast(`${expired.length} dead man's switch(es) triggered!`, 'error');
+    } catch(e) {}
+    // Refresh mesh peers if running
+    if (S.meshRunning) loadMeshPeers();
   }, 30000);
 }
 
@@ -1298,6 +1416,230 @@ document.getElementById('initConfirm').addEventListener('keydown', e => { if(e.k
 document.getElementById('torToggle').addEventListener('change', function() {
   document.getElementById('torFields').style.display = this.checked ? 'block' : 'none';
 });
+
+// ═══ DURESS PROTECTION ═══
+async function loadDuressStatus() {
+  try {
+    const res = await api('GET', '/api/duress/status');
+    S.hasDuress = res.has_duress;
+    updateDuressUI();
+  } catch(e) {}
+}
+
+function updateDuressUI() {
+  const statusEl = document.getElementById('duressStatus');
+  const setupEl = document.getElementById('duressSetup');
+  const removeEl = document.getElementById('duressRemove');
+  if (S.hasDuress) {
+    statusEl.className = 'duress-status active';
+    statusEl.innerHTML = '<span class="status-dot" style="background:var(--secure)"></span><span style="font-size:13px;font-weight:500">Duress vault active</span><span class="badge badge-secure" style="margin-left:auto">Protected</span>';
+    setupEl.style.display = 'none';
+    removeEl.style.display = 'block';
+  } else {
+    statusEl.className = 'duress-status inactive';
+    statusEl.innerHTML = '<span class="status-dot" style="background:var(--iron)"></span><span style="font-size:13px">Not configured</span>';
+    setupEl.style.display = 'block';
+    removeEl.style.display = 'none';
+  }
+}
+
+async function setupDuress() {
+  const realPw = document.getElementById('duressRealPw').value;
+  const duressPw = document.getElementById('duressDuressPw').value;
+  if (!realPw || !duressPw) return toast('Both passwords required', 'error');
+  if (realPw === duressPw) return toast('Passwords must be different', 'error');
+  try {
+    await api('POST', '/api/duress/setup', { real_password: realPw, duress_password: duressPw });
+    toast('Duress vault enabled', 'success');
+    document.getElementById('duressRealPw').value = '';
+    document.getElementById('duressDuressPw').value = '';
+    S.hasDuress = true;
+    updateDuressUI();
+  } catch(e) { toast('Setup failed: ' + e.message, 'error'); }
+}
+
+async function removeDuress() {
+  const pw = prompt('Enter your real password to remove duress vault:');
+  if (!pw) return;
+  try {
+    await api('POST', '/api/duress/remove', { password: pw });
+    toast('Duress vault removed', 'info');
+    S.hasDuress = false;
+    updateDuressUI();
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ═══ DEAD MAN'S SWITCH ═══
+async function loadDMS() {
+  try {
+    S.dmsList = await api('GET', '/api/dms');
+    renderDMS();
+  } catch(e) { S.dmsList = []; renderDMS(); }
+}
+
+function renderDMS() {
+  const el = document.getElementById('dmsList');
+  if (!S.dmsList.length) {
+    el.innerHTML = '<div class="mesh-empty">No switches configured</div>';
+    return;
+  }
+  let html = '';
+  S.dmsList.forEach(d => {
+    const hrs = Math.round(d.interval_secs / 3600);
+    const lastCheckin = d.last_check_in ? new Date(d.last_check_in).toLocaleString() : 'Never';
+    const statusBadge = d.enabled
+      ? (d.triggered ? '<span class="badge badge-danger">Triggered</span>' : '<span class="badge badge-secure">Active</span>')
+      : '<span class="badge badge-cyan" style="opacity:0.5">Paused</span>';
+    html += `
+      <div class="dms-item">
+        <div class="dms-header">${statusBadge}
+          <div class="dms-actions">
+            <button onclick="toggleDMS('${esc(d.id)}', ${!d.enabled})">${d.enabled ? 'Pause' : 'Resume'}</button>
+            <button class="danger" onclick="deleteDMS('${esc(d.id)}')">Delete</button>
+          </div>
+        </div>
+        <div class="dms-msg">${esc(d.message)}</div>
+        <div class="dms-meta">
+          <span>Every ${hrs}h</span>
+          <span>Last: ${lastCheckin}</span>
+          <span>${d.recipients.length} recipient${d.recipients.length!==1?'s':''}</span>
+        </div>
+      </div>`;
+  });
+  el.innerHTML = html;
+}
+
+function openCreateDMS() {
+  const list = document.getElementById('dmsRecipientsList');
+  let html = '';
+  S.contacts.forEach(c => {
+    const name = c.name || c.fingerprint.slice(0,12);
+    html += `
+      <label class="member-check">
+        <input type="checkbox" value="${esc(c.fingerprint)}">
+        <span class="member-label">${esc(name)}</span>
+      </label>`;
+  });
+  if (!S.contacts.length) {
+    html = '<p style="color:var(--iron);font-size:13px">No contacts. Add contacts first.</p>';
+  }
+  list.innerHTML = html;
+  document.getElementById('dmsMessage').value = '';
+  document.getElementById('dmsInterval').value = '24';
+  document.getElementById('createDmsModal').classList.add('visible');
+}
+
+async function createDMS() {
+  const message = document.getElementById('dmsMessage').value.trim();
+  const hours = parseInt(document.getElementById('dmsInterval').value) || 24;
+  if (!message) return toast('Enter a message', 'error');
+  const checks = document.querySelectorAll('#dmsRecipientsList input[type="checkbox"]:checked');
+  const recipients = Array.from(checks).map(c => c.value);
+  if (!recipients.length) return toast('Select at least one recipient', 'error');
+  try {
+    await api('POST', '/api/dms', {
+      recipients, message,
+      interval_secs: hours * 3600
+    });
+    toast('Dead man\'s switch created', 'success');
+    closeModal('createDmsModal');
+    loadDMS();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function checkInDMS() {
+  try {
+    await api('POST', '/api/dms/check-in');
+    toast('Checked in successfully', 'success');
+    loadDMS();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleDMS(id, enabled) {
+  try {
+    await api('POST', `/api/dms/${encodeURIComponent(id)}/toggle`, { enabled });
+    loadDMS();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteDMS(id) {
+  if (!confirm('Delete this switch?')) return;
+  try {
+    await api('DELETE', `/api/dms/${encodeURIComponent(id)}`);
+    toast('Switch deleted', 'info');
+    loadDMS();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ═══ LAN MESH ═══
+async function loadMeshStatus() {
+  try {
+    const res = await api('GET', '/api/mesh/status');
+    S.meshRunning = res.running;
+    document.getElementById('meshDot').style.background = res.running ? 'var(--secure)' : 'var(--iron)';
+    document.getElementById('meshStatus').textContent = res.running ? 'Active' : 'Inactive';
+    document.getElementById('meshStatus').style.color = res.running ? 'var(--secure)' : 'var(--iron)';
+    document.getElementById('meshControls').style.display = res.running ? 'none' : 'block';
+    document.getElementById('meshStopBtn').style.display = res.running ? 'block' : 'none';
+    if (res.running) loadMeshPeers();
+  } catch(e) {}
+}
+
+async function loadMeshPeers() {
+  try {
+    const peers = await api('GET', '/api/mesh/peers');
+    document.getElementById('meshPeerCount').textContent = peers.length;
+    const el = document.getElementById('meshPeerList');
+    if (!peers.length) {
+      el.innerHTML = '<div class="mesh-empty">Scanning for LAN peers...</div>';
+      return;
+    }
+    let html = '';
+    peers.forEach(p => {
+      const name = p.name || p.fingerprint.slice(0,12);
+      html += `
+        <div class="mesh-peer">
+          <span class="mesh-dot"></span>
+          <div class="mesh-info">
+            <div class="mesh-name">${esc(name)}</div>
+            <div class="mesh-addr">${esc(p.addr)}</div>
+          </div>
+          <span class="badge badge-secure" style="font-size:9px">LAN</span>
+        </div>`;
+    });
+    el.innerHTML = html;
+  } catch(e) {}
+}
+
+async function startMesh() {
+  const addr = document.getElementById('meshListenAddr').value.trim();
+  try {
+    await api('POST', '/api/mesh/start', { listen_addr: addr || '0.0.0.0:4433' });
+    toast('Mesh discovery started', 'success');
+    loadMeshStatus();
+  } catch(e) { toast('Mesh error: ' + e.message, 'error'); }
+}
+
+async function stopMesh() {
+  try {
+    await api('POST', '/api/mesh/stop');
+    toast('Mesh discovery stopped', 'info');
+    S.meshRunning = false;
+    loadMeshStatus();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ═══ STEGANOGRAPHIC TRANSPORT ═══
+function toggleStegoMode() {
+  S.stegoMode = !S.stegoMode;
+  const btn = document.getElementById('stegoBtn');
+  btn.classList.toggle('active', S.stegoMode);
+  if (S.stegoMode) {
+    toast('Stego mode ON: messages will be hidden in images', 'info');
+  } else {
+    toast('Stego mode OFF', 'info');
+  }
+}
 
 // Boot
 boot();

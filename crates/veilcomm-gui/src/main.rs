@@ -630,6 +630,241 @@ async fn post_group_messages_read(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// ─── Duress API Handlers ─────────────────────────────────────
+
+#[derive(Deserialize)]
+struct DuressSetupRequest {
+    real_password: String,
+    duress_password: String,
+}
+
+async fn post_setup_duress(
+    State(client): State<AppState>,
+    Json(req): Json<DuressSetupRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    let fp = client.setup_duress(&req.real_password, &req.duress_password)?;
+    Ok(Json(serde_json::json!({ "ok": true, "duress_fingerprint": fp })))
+}
+
+async fn get_duress_status(
+    State(client): State<AppState>,
+) -> ApiResult<serde_json::Value> {
+    let client = client.lock().await;
+    Ok(Json(serde_json::json!({ "has_duress": client.has_duress() })))
+}
+
+async fn post_remove_duress(
+    State(client): State<AppState>,
+    Json(req): Json<UnlockRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    client.remove_duress(&req.password)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ─── Dead Man's Switch API Handlers ─────────────────────────
+
+#[derive(Deserialize)]
+struct CreateDmsRequest {
+    recipients: Vec<String>,
+    message: String,
+    interval_hours: i64,
+}
+
+#[derive(Serialize)]
+struct DmsResponse {
+    id: String,
+    recipients: Vec<String>,
+    message: String,
+    interval_hours: i64,
+    last_check_in: String,
+    enabled: bool,
+    triggered: bool,
+}
+
+async fn get_dead_man_switches(
+    State(client): State<AppState>,
+) -> ApiResult<Vec<DmsResponse>> {
+    let client = client.lock().await;
+    let switches = client.list_dead_man_switches()?;
+    let result: Vec<DmsResponse> = switches
+        .into_iter()
+        .map(|d| DmsResponse {
+            id: d.id,
+            recipients: d.recipient_fingerprints,
+            message: d.message,
+            interval_hours: d.check_in_interval_secs / 3600,
+            last_check_in: d.last_check_in.to_rfc3339(),
+            enabled: d.enabled,
+            triggered: d.triggered,
+        })
+        .collect();
+    Ok(Json(result))
+}
+
+async fn post_dead_man_switch(
+    State(client): State<AppState>,
+    Json(req): Json<CreateDmsRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    let interval_secs = req.interval_hours * 3600;
+    let id = client.create_dead_man_switch(req.recipients, &req.message, interval_secs)?;
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+async fn post_dead_man_check_in(
+    State(client): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    client.dead_man_check_in()?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn delete_dead_man_switch_handler(
+    State(client): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    client.delete_dead_man_switch(&id)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct ToggleDmsRequest {
+    enabled: bool,
+}
+
+async fn post_toggle_dead_man_switch(
+    State(client): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ToggleDmsRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    client.toggle_dead_man_switch(&id, req.enabled)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn get_expired_switches(
+    State(client): State<AppState>,
+) -> ApiResult<Vec<DmsResponse>> {
+    let client = client.lock().await;
+    let expired = client.check_expired_switches()?;
+    let result: Vec<DmsResponse> = expired
+        .into_iter()
+        .map(|d| DmsResponse {
+            id: d.id,
+            recipients: d.recipient_fingerprints,
+            message: d.message,
+            interval_hours: d.check_in_interval_secs / 3600,
+            last_check_in: d.last_check_in.to_rfc3339(),
+            enabled: d.enabled,
+            triggered: d.triggered,
+        })
+        .collect();
+    Ok(Json(result))
+}
+
+// ─── Mesh Discovery API Handlers ────────────────────────────
+
+#[derive(Deserialize)]
+struct MeshStartRequest {
+    listen_addr: String,
+}
+
+#[derive(Serialize)]
+struct MeshPeerResponse {
+    fingerprint: String,
+    name: Option<String>,
+    addr: String,
+}
+
+async fn post_mesh_start(
+    State(client): State<AppState>,
+    Json(req): Json<MeshStartRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    let addr: SocketAddr = req.listen_addr.parse()
+        .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
+    client.start_mesh(addr).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn post_mesh_stop(
+    State(client): State<AppState>,
+) -> Json<serde_json::Value> {
+    let mut client = client.lock().await;
+    client.stop_mesh().await;
+    Json(serde_json::json!({ "ok": true }))
+}
+
+async fn get_mesh_peers(
+    State(client): State<AppState>,
+) -> ApiResult<Vec<MeshPeerResponse>> {
+    let client = client.lock().await;
+    let peers = client.mesh_peers();
+    let result: Vec<MeshPeerResponse> = peers
+        .into_iter()
+        .map(|p| MeshPeerResponse {
+            fingerprint: p.fingerprint,
+            name: p.name,
+            addr: p.addr.to_string(),
+        })
+        .collect();
+    Ok(Json(result))
+}
+
+async fn get_mesh_status(
+    State(client): State<AppState>,
+) -> ApiResult<serde_json::Value> {
+    let client = client.lock().await;
+    Ok(Json(serde_json::json!({
+        "running": client.is_mesh_running()
+    })))
+}
+
+// ─── Steganography API Handlers ─────────────────────────────
+
+#[derive(Deserialize)]
+struct StegoEncodeRequest {
+    payload_base64: String,
+}
+
+async fn post_stego_encode(
+    State(client): State<AppState>,
+    Json(req): Json<StegoEncodeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    let payload = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &req.payload_base64,
+    ).map_err(|e| anyhow::anyhow!("Invalid base64: {}", e))?;
+
+    let bmp = client.stego_encode(&payload)?;
+    let bmp_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bmp);
+    Ok(Json(serde_json::json!({ "bmp_base64": bmp_b64 })))
+}
+
+#[derive(Deserialize)]
+struct StegoDecodeRequest {
+    bmp_base64: String,
+}
+
+async fn post_stego_decode(
+    State(client): State<AppState>,
+    Json(req): Json<StegoDecodeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    let bmp = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &req.bmp_base64,
+    ).map_err(|e| anyhow::anyhow!("Invalid base64: {}", e))?;
+
+    let payload = client.stego_decode(&bmp)?;
+    let payload_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &payload);
+    Ok(Json(serde_json::json!({ "payload_base64": payload_b64 })))
+}
+
 // ─── Helpers ─────────────────────────────────────────────────
 
 #[allow(dead_code)]
@@ -698,6 +933,25 @@ async fn main() {
         .route("/api/groups/{id}/messages", get(get_group_messages))
         .route("/api/groups/{id}/messages", post(post_group_message))
         .route("/api/groups/{id}/messages/read", post(post_group_messages_read))
+        // Duress
+        .route("/api/duress/setup", post(post_setup_duress))
+        .route("/api/duress/status", get(get_duress_status))
+        .route("/api/duress/remove", post(post_remove_duress))
+        // Dead Man's Switch
+        .route("/api/dms", get(get_dead_man_switches))
+        .route("/api/dms", post(post_dead_man_switch))
+        .route("/api/dms/check-in", post(post_dead_man_check_in))
+        .route("/api/dms/expired", get(get_expired_switches))
+        .route("/api/dms/{id}", delete(delete_dead_man_switch_handler))
+        .route("/api/dms/{id}/toggle", post(post_toggle_dead_man_switch))
+        // Mesh Discovery
+        .route("/api/mesh/start", post(post_mesh_start))
+        .route("/api/mesh/stop", post(post_mesh_stop))
+        .route("/api/mesh/peers", get(get_mesh_peers))
+        .route("/api/mesh/status", get(get_mesh_status))
+        // Steganography
+        .route("/api/stego/encode", post(post_stego_encode))
+        .route("/api/stego/decode", post(post_stego_decode))
         .with_state(state);
 
     // Try port 3000 first; fall back to an OS-assigned port if it's already in use.

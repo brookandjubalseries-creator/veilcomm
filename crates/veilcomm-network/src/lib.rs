@@ -11,6 +11,7 @@
 
 pub mod dht;
 pub mod error;
+pub mod mesh;
 pub mod nat;
 pub mod peer;
 pub mod protocol;

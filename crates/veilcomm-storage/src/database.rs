@@ -85,6 +85,19 @@ pub struct StoredGroupMessage {
     pub read: bool,
 }
 
+/// Stored dead man's switch
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredDeadManSwitch {
+    pub id: String,
+    pub recipient_fingerprints: Vec<String>,
+    pub message: String,
+    pub check_in_interval_secs: i64,
+    pub last_check_in: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub enabled: bool,
+    pub triggered: bool,
+}
+
 /// Stored sender key
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredSenderKey {
@@ -190,6 +203,17 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id);
             CREATE INDEX IF NOT EXISTS idx_group_messages_timestamp ON group_messages(timestamp);
+
+            CREATE TABLE IF NOT EXISTS dead_man_switches (
+                id TEXT PRIMARY KEY,
+                recipient_fingerprints TEXT NOT NULL,
+                message TEXT NOT NULL,
+                check_in_interval_secs INTEGER NOT NULL,
+                last_check_in TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                triggered INTEGER NOT NULL DEFAULT 0
+            );
 
             CREATE TABLE IF NOT EXISTS sender_keys (
                 group_id TEXT NOT NULL,
@@ -786,6 +810,136 @@ impl Database {
         Ok(())
     }
 
+    // ==================== Dead Man's Switches ====================
+
+    /// Create a dead man's switch
+    pub fn create_dead_man_switch(&self, dms: &StoredDeadManSwitch) -> Result<()> {
+        let recipients_json = serde_json::to_string(&dms.recipient_fingerprints)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        self.conn.execute(
+            r#"
+            INSERT INTO dead_man_switches (id, recipient_fingerprints, message, check_in_interval_secs, last_check_in, created_at, enabled, triggered)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                dms.id,
+                recipients_json,
+                dms.message,
+                dms.check_in_interval_secs,
+                dms.last_check_in.to_rfc3339(),
+                dms.created_at.to_rfc3339(),
+                dms.enabled as i32,
+                dms.triggered as i32,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get a dead man's switch by ID
+    pub fn get_dead_man_switch(&self, id: &str) -> Result<Option<StoredDeadManSwitch>> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT id, recipient_fingerprints, message, check_in_interval_secs, last_check_in, created_at, enabled, triggered FROM dead_man_switches WHERE id = ?1",
+                params![id],
+                |row| {
+                    let recipients_json: String = row.get(1)?;
+                    let recipients: Vec<String> = serde_json::from_str(&recipients_json)
+                        .unwrap_or_default();
+                    Ok(StoredDeadManSwitch {
+                        id: row.get(0)?,
+                        recipient_fingerprints: recipients,
+                        message: row.get(2)?,
+                        check_in_interval_secs: row.get(3)?,
+                        last_check_in: parse_timestamp_row(&row.get::<_, String>(4)?)?,
+                        created_at: parse_timestamp_row(&row.get::<_, String>(5)?)?,
+                        enabled: row.get::<_, i32>(6)? != 0,
+                        triggered: row.get::<_, i32>(7)? != 0,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    /// List all dead man's switches
+    pub fn list_dead_man_switches(&self) -> Result<Vec<StoredDeadManSwitch>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, recipient_fingerprints, message, check_in_interval_secs, last_check_in, created_at, enabled, triggered FROM dead_man_switches ORDER BY created_at",
+        )?;
+
+        let switches = stmt
+            .query_map([], |row| {
+                let recipients_json: String = row.get(1)?;
+                let recipients: Vec<String> = serde_json::from_str(&recipients_json)
+                    .unwrap_or_default();
+                Ok(StoredDeadManSwitch {
+                    id: row.get(0)?,
+                    recipient_fingerprints: recipients,
+                    message: row.get(2)?,
+                    check_in_interval_secs: row.get(3)?,
+                    last_check_in: parse_timestamp_row(&row.get::<_, String>(4)?)?,
+                    created_at: parse_timestamp_row(&row.get::<_, String>(5)?)?,
+                    enabled: row.get::<_, i32>(6)? != 0,
+                    triggered: row.get::<_, i32>(7)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(switches)
+    }
+
+    /// Update check-in time for a dead man's switch
+    pub fn check_in_dead_man_switch(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE dead_man_switches SET last_check_in = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a dead man's switch as triggered
+    pub fn trigger_dead_man_switch(&self, id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE dead_man_switches SET triggered = 1, enabled = 0 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a dead man's switch
+    pub fn delete_dead_man_switch(&self, id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM dead_man_switches WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Toggle a dead man's switch enabled/disabled
+    pub fn toggle_dead_man_switch(&self, id: &str, enabled: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE dead_man_switches SET enabled = ?1 WHERE id = ?2",
+            params![enabled as i32, id],
+        )?;
+        Ok(())
+    }
+
+    /// Get expired (overdue) dead man's switches that need triggering
+    pub fn get_expired_dead_man_switches(&self) -> Result<Vec<StoredDeadManSwitch>> {
+        let now = Utc::now();
+        let all = self.list_dead_man_switches()?;
+        Ok(all
+            .into_iter()
+            .filter(|dms| {
+                dms.enabled
+                    && !dms.triggered
+                    && (now - dms.last_check_in).num_seconds() > dms.check_in_interval_secs
+            })
+            .collect())
+    }
+
     /// Update sender key state (chain_key, chain_index, skipped_keys)
     pub fn update_sender_key_state(
         &self,
@@ -1079,6 +1233,53 @@ mod tests {
         db.mark_group_messages_read("grp-001").unwrap();
         let unread = db.unread_group_count("grp-001").unwrap();
         assert_eq!(unread, 0);
+    }
+
+    #[test]
+    fn test_dead_man_switch_crud() {
+        let db = Database::in_memory().unwrap();
+
+        let dms = StoredDeadManSwitch {
+            id: "dms-001".to_string(),
+            recipient_fingerprints: vec!["alice_fp".to_string(), "bob_fp".to_string()],
+            message: "If you're reading this, I'm gone.".to_string(),
+            check_in_interval_secs: 86400, // 24 hours
+            last_check_in: Utc::now(),
+            created_at: Utc::now(),
+            enabled: true,
+            triggered: false,
+        };
+
+        // Create
+        db.create_dead_man_switch(&dms).unwrap();
+
+        // Get
+        let retrieved = db.get_dead_man_switch("dms-001").unwrap().unwrap();
+        assert_eq!(retrieved.message, dms.message);
+        assert_eq!(retrieved.recipient_fingerprints.len(), 2);
+
+        // List
+        let all = db.list_dead_man_switches().unwrap();
+        assert_eq!(all.len(), 1);
+
+        // Check-in
+        db.check_in_dead_man_switch("dms-001").unwrap();
+
+        // Toggle
+        db.toggle_dead_man_switch("dms-001", false).unwrap();
+        let toggled = db.get_dead_man_switch("dms-001").unwrap().unwrap();
+        assert!(!toggled.enabled);
+
+        // Trigger
+        db.toggle_dead_man_switch("dms-001", true).unwrap();
+        db.trigger_dead_man_switch("dms-001").unwrap();
+        let triggered = db.get_dead_man_switch("dms-001").unwrap().unwrap();
+        assert!(triggered.triggered);
+        assert!(!triggered.enabled);
+
+        // Delete
+        db.delete_dead_man_switch("dms-001").unwrap();
+        assert!(db.get_dead_man_switch("dms-001").unwrap().is_none());
     }
 
     #[test]
