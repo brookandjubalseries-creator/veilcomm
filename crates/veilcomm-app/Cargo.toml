@@ -1,0 +1,37 @@
+[package]
+name = "veilcomm-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Application logic for VeilComm"
+
+[dependencies]
+veilcomm-core = { workspace = true }
+veilcomm-network = { workspace = true }
+veilcomm-storage = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+
+# Crypto
+x25519-dalek = { workspace = true }
+blake2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+hex = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

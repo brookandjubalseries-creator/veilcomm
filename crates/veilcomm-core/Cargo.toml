@@ -1,0 +1,39 @@
+[package]
+name = "veilcomm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core cryptographic primitives and protocol implementation for VeilComm"
+
+[dependencies]
+# Crypto
+x25519-dalek = { workspace = true }
+ed25519-dalek = { workspace = true }
+curve25519-dalek = { workspace = true }
+chacha20poly1305 = { workspace = true }
+blake2 = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+pqcrypto-kyber = { workspace = true }
+pqcrypto-traits = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Utilities
+zeroize = { workspace = true }
+secrecy = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

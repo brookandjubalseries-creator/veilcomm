@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VeilComm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root {
+  --void: #07070c;
+  --abyss: #0b0b12;
+  --obsidian: #101018;
+  --slate: #16161f;
+  --graphite: #1e1e2a;
+  --steel: #2d2d3f;
+  --iron: #3a3a52;
+  --silver: #8888a8;
+  --ghost: #b0b0cc;
+  --white: #eaeaf8;
+  --cyan: #00e5ff;
+  --cyan-dim: #00b2c6;
+  --cyan-dark: #004850;
+  --cyan-glow: rgba(0,229,255,0.15);
+  --cyan-glow-strong: rgba(0,229,255,0.3);
+  --violet: #a855f7;
+  --violet-dim: #7c3aed;
+  --violet-glow: rgba(168,85,247,0.12);
+  --secure: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --glass-bg: rgba(255,255,255,0.03);
+  --glass-border: rgba(255,255,255,0.06);
+  --glass-border-hover: rgba(255,255,255,0.12);
+  --glass-surface: rgba(255,255,255,0.05);
+  --glass-elevated: rgba(255,255,255,0.07);
+  --shadow: rgba(0,0,0,0.5);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --sidebar-w: 340px;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+html,body{height:100%;overflow:hidden;background:var(--void);color:var(--white);font-family:var(--font-body);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+::selection{background:var(--cyan-glow-strong);color:var(--white)}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--steel);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--iron)}
+input,button,textarea{font-family:inherit;font-size:inherit;color:inherit;border:none;outline:none;background:none}
+button{cursor:pointer}
+
+/* ═══ BACKGROUND ═══ */
+body::before{content:'';position:fixed;inset:0;background:
+  radial-gradient(ellipse 80% 60% at 20% 0%, rgba(0,229,255,0.04) 0%, transparent 60%),
+  radial-gradient(ellipse 60% 80% at 80% 100%, rgba(168,85,247,0.03) 0%, transparent 60%),
+  radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0,229,255,0.015) 0%, transparent 70%);
+  pointer-events:none;z-index:0}
+body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");opacity:0.4;pointer-events:none;z-index:0}
+
+/* ═══ GLASS COMPONENTS ═══ */
+.glass{background:var(--glass-bg);backdrop-filter:blur(20px) saturate(1.2);-webkit-backdrop-filter:blur(20px) saturate(1.2);border:1px solid var(--glass-border);border-radius:var(--radius-md)}
+.glass-elevated{background:var(--glass-elevated);backdrop-filter:blur(30px) saturate(1.3);-webkit-backdrop-filter:blur(30px) saturate(1.3);border:1px solid var(--glass-border);border-radius:var(--radius-md);box-shadow:0 8px 32px var(--shadow), inset 0 1px 0 rgba(255,255,255,0.04)}
+.glass-card{background:var(--glass-surface);backdrop-filter:blur(24px) saturate(1.2);-webkit-backdrop-filter:blur(24px) saturate(1.2);border:1px solid var(--glass-border);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)}
+.glass-input{background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:var(--radius-sm);padding:12px 16px;color:var(--white);transition:var(--transition);width:100%;font-size:14px;font-family:var(--font-body)}
+.glass-input:focus{border-color:rgba(0,229,255,0.3);box-shadow:0 0 0 3px rgba(0,229,255,0.08), inset 0 0 20px rgba(0,229,255,0.03)}
+.glass-input::placeholder{color:var(--iron);font-weight:300}
+.glass-input[type="password"]{font-family:var(--font-mono);letter-spacing:3px}
+
+/* ═══ BUTTONS ═══ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 24px;border-radius:var(--radius-sm);font-weight:500;font-size:14px;transition:var(--transition);position:relative;overflow:hidden;letter-spacing:0.02em}
+.btn::before{content:'';position:absolute;inset:0;opacity:0;transition:var(--transition)}
+.btn-primary{background:linear-gradient(135deg, var(--cyan-dim), var(--cyan));color:var(--void);font-weight:600}
+.btn-primary:hover{box-shadow:0 0 24px rgba(0,229,255,0.3), 0 4px 16px rgba(0,229,255,0.2);transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0);box-shadow:0 0 12px rgba(0,229,255,0.2)}
+.btn-ghost{background:var(--glass-bg);border:1px solid var(--glass-border);color:var(--ghost)}
+.btn-ghost:hover{background:var(--glass-surface);border-color:var(--glass-border-hover);color:var(--white)}
+.btn-danger{background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.2);color:var(--danger)}
+.btn-danger:hover{background:rgba(239,68,68,0.25);box-shadow:0 0 20px rgba(239,68,68,0.15)}
+.btn-full{width:100%}
+.btn-sm{padding:8px 16px;font-size:13px}
+
+/* ═══ BADGES ═══ */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:600;font-family:var(--font-mono);letter-spacing:0.08em;text-transform:uppercase;white-space:nowrap}
+.badge-cyan{background:rgba(0,229,255,0.1);color:var(--cyan);border:1px solid rgba(0,229,255,0.15)}
+.badge-violet{background:rgba(168,85,247,0.1);color:var(--violet);border:1px solid rgba(168,85,247,0.15)}
+.badge-secure{background:rgba(16,185,129,0.1);color:var(--secure);border:1px solid rgba(16,185,129,0.15)}
+.badge-danger{background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid rgba(239,68,68,0.15)}
+
+/* ═══ TOGGLE ═══ */
+.toggle{position:relative;width:46px;height:26px;cursor:pointer;flex-shrink:0}
+.toggle input{display:none}
+.toggle .track{position:absolute;inset:0;border-radius:13px;background:var(--steel);border:1px solid var(--glass-border);transition:var(--transition-slow)}
+.toggle .knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--ghost);transition:var(--transition-slow);box-shadow:0 2px 4px rgba(0,0,0,0.3)}
+.toggle input:checked ~ .track{background:rgba(0,229,255,0.25);border-color:rgba(0,229,255,0.3)}
+.toggle input:checked ~ .knob{left:23px;background:var(--cyan);box-shadow:0 0 12px rgba(0,229,255,0.4), 0 2px 4px rgba(0,0,0,0.3)}
+
+/* ═══ TOAST ═══ */
+#toasts{position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+.toast{pointer-events:auto;padding:14px 20px;border-radius:var(--radius-sm);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);background:rgba(16,16,24,0.85);border:1px solid var(--glass-border);box-shadow:0 8px 24px var(--shadow);font-size:13px;animation:toastIn 0.3s ease-out, toastOut 0.3s ease-in forwards;animation-delay:0s, 3.5s;max-width:360px;display:flex;align-items:center;gap:10px}
+.toast.success{border-left:3px solid var(--secure);color:var(--secure)}
+.toast.error{border-left:3px solid var(--danger);color:var(--danger)}
+.toast.info{border-left:3px solid var(--cyan);color:var(--cyan)}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toastOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(40px)}}
+
+/* ═══ SCREENS ═══ */
+.screen{position:absolute;inset:0;z-index:1;display:none;overflow:hidden}
+.screen.active{display:flex}
+
+/* ═══ LOGIN SCREEN ═══ */
+#loginScreen{align-items:center;justify-content:center;flex-direction:column}
+.login-container{width:100%;max-width:420px;animation:fadeUp 0.6s ease-out}
+.login-logo{text-align:center;margin-bottom:48px}
+.login-logo h1{font-family:var(--font-display);font-weight:800;font-size:48px;letter-spacing:-0.03em;background:linear-gradient(135deg, var(--cyan), var(--violet));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1}
+.login-logo p{color:var(--silver);font-size:14px;margin-top:8px;font-weight:300;letter-spacing:0.04em}
+.login-card{padding:36px}
+.login-card .field{margin-bottom:20px}
+.login-card .field label{display:block;font-size:11px;font-weight:500;color:var(--silver);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;font-family:var(--font-mono)}
+.login-card .error-msg{color:var(--danger);font-size:12px;margin-bottom:16px;display:none;padding:10px 14px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.15);border-radius:var(--radius-sm)}
+.login-card .error-msg.visible{display:block}
+.login-footer{text-align:center;margin-top:20px}
+.login-footer a{color:var(--cyan-dim);font-size:13px;text-decoration:none;transition:var(--transition);font-weight:400}
+.login-footer a:hover{color:var(--cyan);text-shadow:0 0 12px rgba(0,229,255,0.3)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+
+/* ═══ MAIN APP ═══ */
+#appScreen{flex-direction:row}
+
+/* Sidebar */
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);height:100%;display:flex;flex-direction:column;background:var(--abyss);border-right:1px solid var(--glass-border);position:relative;z-index:2}
+.sidebar-header{padding:20px;border-bottom:1px solid var(--glass-border)}
+.sidebar-identity{display:flex;align-items:center;gap:14px}
+.sidebar-identity .avatar{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:20px;flex-shrink:0;position:relative}
+.sidebar-identity .info{flex:1;min-width:0}
+.sidebar-identity .name{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-identity .badges{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+.sidebar-identity .settings-btn{background:none;border:none;color:var(--silver);font-size:18px;padding:8px;border-radius:var(--radius-sm);transition:var(--transition)}
+.sidebar-identity .settings-btn:hover{background:var(--glass-surface);color:var(--white)}
+.fingerprint-bar{margin-top:14px;padding:10px 14px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:11px;color:var(--cyan-dim);cursor:pointer;transition:var(--transition);text-align:center;letter-spacing:0.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fingerprint-bar:hover{background:var(--glass-surface);border-color:rgba(0,229,255,0.15);color:var(--cyan)}
+
+/* Tabs */
+.sidebar-tabs{display:flex;border-bottom:1px solid var(--glass-border);position:relative}
+.sidebar-tabs .tab{flex:1;padding:12px;font-size:13px;font-weight:500;color:var(--silver);background:none;border:none;cursor:pointer;transition:var(--transition);position:relative}
+.sidebar-tabs .tab:hover{color:var(--ghost)}
+.sidebar-tabs .tab.active{color:var(--cyan)}
+.sidebar-tabs .tab.active::after{content:'';position:absolute;bottom:-1px;left:16px;right:16px;height:2px;background:var(--cyan);border-radius:1px;box-shadow:0 0 8px rgba(0,229,255,0.4)}
+
+/* Contact list */
+.sidebar-list{flex:1;overflow-y:auto;padding:8px}
+.sidebar-section-label{font-size:10px;font-weight:600;color:var(--iron);text-transform:uppercase;letter-spacing:0.1em;padding:12px 12px 8px;font-family:var(--font-mono)}
+.contact-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:var(--radius-md);cursor:pointer;transition:var(--transition);position:relative}
+.contact-item:hover{background:var(--glass-bg)}
+.contact-item.active{background:rgba(0,229,255,0.06)}
+.contact-item.active::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:28px;background:var(--cyan);border-radius:0 2px 2px 0;box-shadow:0 0 8px rgba(0,229,255,0.3)}
+.contact-item .avatar{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:16px;flex-shrink:0;position:relative;border:1px solid var(--glass-border)}
+.contact-item .avatar .online-dot{position:absolute;bottom:-1px;right:-1px;width:12px;height:12px;border-radius:50%;border:2px solid var(--abyss)}
+.contact-item .avatar .online-dot.online{background:var(--secure)}
+.contact-item .avatar .online-dot.offline{background:var(--iron)}
+.contact-item .details{flex:1;min-width:0}
+.contact-item .details .top{display:flex;align-items:center;gap:6px}
+.contact-item .details .contact-name{font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.contact-item .details .verified{color:var(--secure);font-size:12px}
+.contact-item .details .preview{font-size:12px;color:var(--silver);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.contact-item .meta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.contact-item .meta .time{font-size:11px;color:var(--iron)}
+.contact-item .unread-badge{min-width:20px;height:20px;border-radius:10px;background:var(--cyan);color:var(--void);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 6px;box-shadow:0 0 10px rgba(0,229,255,0.3)}
+.sidebar-empty{text-align:center;padding:48px 24px;color:var(--iron)}
+.sidebar-empty p{margin-top:8px;font-size:12px}
+
+/* Sidebar footer */
+.sidebar-footer{padding:16px;border-top:1px solid var(--glass-border)}
+
+/* ═══ CONTENT AREA ═══ */
+.content{flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden}
+
+/* Chat header */
+.chat-header{padding:16px 24px;border-bottom:1px solid var(--glass-border);display:flex;align-items:center;gap:14px;background:var(--abyss);z-index:1}
+.chat-header .avatar{width:44px;height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:18px;position:relative;border:1px solid var(--glass-border)}
+.chat-header .info{flex:1}
+.chat-header .info .name{font-weight:600;font-size:16px;display:flex;align-items:center;gap:8px}
+.chat-header .info .status-row{display:flex;align-items:center;gap:8px;margin-top:3px}
+.chat-header .actions{display:flex;gap:4px}
+.chat-header .actions button{padding:8px 10px;border-radius:var(--radius-sm);color:var(--silver);background:none;border:none;font-size:16px;transition:var(--transition)}
+.chat-header .actions button:hover{background:var(--glass-surface);color:var(--white)}
+
+/* Search bar */
+.search-bar{padding:10px 24px;border-bottom:1px solid var(--glass-border);display:none;align-items:center;gap:10px;background:rgba(0,0,0,0.2)}
+.search-bar.visible{display:flex}
+.search-bar input{flex:1;background:none;border:none;color:var(--white);font-size:14px}
+.search-bar input::placeholder{color:var(--iron)}
+.search-bar .close-search{background:none;border:none;color:var(--silver);padding:4px 8px;cursor:pointer;font-size:16px}
+
+/* Messages */
+.messages-area{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:4px}
+.msg-notice{text-align:center;padding:16px;font-size:11px;color:var(--iron);font-family:var(--font-mono);letter-spacing:0.02em}
+.msg-notice .lock-icon{display:inline-block;margin-right:6px;color:var(--cyan-dim)}
+.msg-date{text-align:center;padding:12px;font-size:11px;color:var(--iron);font-weight:500;letter-spacing:0.06em;text-transform:uppercase}
+.msg-row{display:flex;flex-direction:column;max-width:70%;animation:msgIn 0.25s ease-out}
+.msg-row.sent{align-self:flex-end;align-items:flex-end}
+.msg-row.received{align-self:flex-start;align-items:flex-start}
+.msg-bubble{padding:12px 16px;font-size:14px;line-height:1.5;word-break:break-word}
+.msg-row.sent .msg-bubble{background:linear-gradient(135deg, var(--cyan-dim), #00a5b8);color:var(--void);border-radius:16px 16px 4px 16px;font-weight:400}
+.msg-row.received .msg-bubble{background:var(--glass-elevated);border:1px solid var(--glass-border);color:var(--white);border-radius:16px 16px 16px 4px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.msg-meta{display:flex;align-items:center;gap:6px;padding:4px 4px 0;font-size:10px;color:var(--iron)}
+.msg-row.sent .msg-meta{color:var(--silver)}
+.msg-meta .read-tick{color:var(--cyan)}
+.messages-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--iron);gap:8px}
+.messages-empty .icon{font-size:40px;opacity:0.3}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Input bar */
+.input-bar{padding:16px 24px;border-top:1px solid var(--glass-border);display:flex;align-items:center;gap:12px;background:var(--abyss)}
+.input-bar .msg-input{flex:1;padding:12px 18px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:24px;color:var(--white);font-size:14px;transition:var(--transition);font-family:var(--font-body)}
+.input-bar .msg-input:focus{border-color:rgba(0,229,255,0.2);box-shadow:0 0 0 3px rgba(0,229,255,0.06)}
+.input-bar .msg-input::placeholder{color:var(--iron);font-weight:300}
+.input-bar .send-btn{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg, var(--cyan-dim), var(--cyan));color:var(--void);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;transition:var(--transition);flex-shrink:0;font-size:18px}
+.input-bar .send-btn:hover{box-shadow:0 0 20px rgba(0,229,255,0.3);transform:scale(1.05)}
+
+/* Empty state */
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--iron);gap:12px}
+.empty-state .icon{font-size:56px;opacity:0.15}
+.empty-state h3{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--ghost)}
+.empty-state p{font-size:13px}
+
+/* ═══ NETWORK PANEL ═══ */
+.network-panel{flex:1;overflow-y:auto;padding:32px}
+.network-panel h2{font-family:var(--font-display);font-weight:700;font-size:24px;margin-bottom:6px}
+.network-panel .subtitle{color:var(--silver);font-size:13px;margin-bottom:28px}
+.network-cards{display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:20px}
+.net-card{padding:24px}
+.net-card h3{font-size:15px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.net-card h3 .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.net-card .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--glass-border)}
+.net-card .row:last-child{border-bottom:none}
+.net-card .row .label{font-size:12px;color:var(--silver)}
+.net-card .row .value{font-size:13px;font-family:var(--font-mono);color:var(--ghost)}
+.net-card .field{margin-top:16px}
+.net-card .field label{display:block;font-size:11px;color:var(--silver);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;font-family:var(--font-mono)}
+
+/* ═══ MODALS ═══ */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:100;display:none;align-items:center;justify-content:center;animation:fadeIn 0.2s ease-out}
+.modal-overlay.visible{display:flex}
+.modal{width:100%;max-width:460px;padding:32px;max-height:85vh;overflow-y:auto;animation:modalIn 0.3s ease-out}
+.modal h2{font-family:var(--font-display);font-weight:700;font-size:20px;margin-bottom:4px}
+.modal .modal-desc{color:var(--silver);font-size:13px;margin-bottom:24px;line-height:1.6}
+.modal .field{margin-bottom:18px}
+.modal .field label{display:block;font-size:11px;font-weight:500;color:var(--silver);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;font-family:var(--font-mono)}
+.modal .modal-header{display:flex;justify-content:space-between;align-items:start;margin-bottom:4px}
+.modal .close-btn{background:none;border:none;color:var(--silver);font-size:20px;cursor:pointer;padding:4px;transition:var(--transition);line-height:1}
+.modal .close-btn:hover{color:var(--white)}
+.modal .modal-actions{display:flex;gap:12px;justify-content:flex-end;margin-top:24px}
+
+/* Settings specific */
+.settings-section{margin-bottom:24px}
+.settings-section .section-label{font-size:10px;font-weight:600;color:var(--iron);text-transform:uppercase;letter-spacing:0.1em;font-family:var(--font-mono);margin-bottom:12px}
+.setting-row{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);margin-bottom:8px;transition:var(--transition)}
+.setting-row:hover{background:var(--glass-surface)}
+.setting-row .setting-info .setting-title{font-size:14px;font-weight:500}
+.setting-row .setting-info .setting-desc{font-size:12px;color:var(--silver);margin-top:2px}
+
+/* Verify specific */
+.fp-box{padding:16px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);margin-bottom:12px}
+.fp-box .fp-label{font-size:11px;color:var(--iron);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px}
+.fp-box .fp-value{font-family:var(--font-mono);font-size:14px;letter-spacing:0.08em;word-break:break-all;line-height:1.6}
+.fp-box.yours .fp-value{color:var(--cyan)}
+.fp-box.theirs .fp-value{color:var(--violet)}
+
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalIn{from{opacity:0;transform:scale(0.95) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
+
+/* ═══ AVATAR COLORS ═══ */
+.avatar-0{background:linear-gradient(135deg, #1a3a4a, #0d4a5a)}
+.avatar-1{background:linear-gradient(135deg, #2d1a4a, #4a1a6a)}
+.avatar-2{background:linear-gradient(135deg, #1a4a2a, #0d5a3a)}
+.avatar-3{background:linear-gradient(135deg, #4a2a1a, #5a3a0d)}
+.avatar-4{background:linear-gradient(135deg, #1a2a4a, #0d3a5a)}
+.avatar-5{background:linear-gradient(135deg, #4a1a3a, #5a0d4a)}
+</style>
+</head>
+<body>
+
+<!-- TOAST CONTAINER -->
+<div id="toasts"></div>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" class="screen active">
+  <div class="login-container">
+    <div class="login-logo">
+      <h1>VeilComm</h1>
+      <p>Post-Quantum Encrypted Messaging</p>
+    </div>
+    <div class="glass-card login-card">
+      <div id="loginForm">
+        <h3 style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">Welcome Back</h3>
+        <p style="color:var(--silver);font-size:13px;margin-bottom:24px">Enter your password to unlock</p>
+        <div id="loginError" class="error-msg"></div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="loginPassword" class="glass-input" placeholder="Enter password" autocomplete="current-password">
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doUnlock()">Unlock</button>
+        <div class="login-footer">
+          <a href="#" onclick="showInitForm();return false">Create new identity</a>
+        </div>
+      </div>
+      <div id="initForm" style="display:none">
+        <h3 style="font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:4px">Create Identity</h3>
+        <p style="color:var(--silver);font-size:13px;margin-bottom:24px">Generate your cryptographic identity</p>
+        <div id="initError" class="error-msg"></div>
+        <div class="field">
+          <label>Display Name</label>
+          <input type="text" id="initName" class="glass-input" placeholder="Enter your name" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="initPassword" class="glass-input" placeholder="Minimum 8 characters" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label>Confirm Password</label>
+          <input type="password" id="initConfirm" class="glass-input" placeholder="Re-enter password" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doInit()">Create Identity</button>
+        <div class="login-footer">
+          <a href="#" onclick="showLoginForm();return false">Already have an identity? Login</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP SCREEN -->
+<div id="appScreen" class="screen">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-identity">
+        <div class="avatar avatar-0" id="myAvatar">?</div>
+        <div class="info">
+          <div class="name" id="myName">User</div>
+          <div class="badges">
+            <span class="badge badge-secure">Secured</span>
+            <span class="badge badge-violet" id="pqBadge">PQ</span>
+          </div>
+        </div>
+        <button class="settings-btn" onclick="openSettings()" title="Settings">&#9881;</button>
+      </div>
+      <div class="fingerprint-bar" id="myFingerprint" onclick="copyFingerprint()" title="Click to copy">...</div>
+    </div>
+    <div class="sidebar-tabs">
+      <button class="tab active" data-tab="chats" onclick="switchTab('chats')">Chats</button>
+      <button class="tab" data-tab="contacts" onclick="switchTab('contacts')">Contacts</button>
+      <button class="tab" data-tab="network" onclick="switchTab('network')">Network</button>
+    </div>
+    <div class="sidebar-list" id="sidebarList">
+      <div class="sidebar-empty" id="noContacts">
+        <div style="font-size:28px;opacity:0.2">&#128172;</div>
+        <p>No contacts yet</p>
+        <p style="font-size:11px">Add a contact to start chatting</p>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button class="btn btn-ghost btn-full btn-sm" onclick="openAddContact()">+ Add Contact</button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <!-- Empty state -->
+    <div class="empty-state" id="emptyState">
+      <div class="icon">&#128274;</div>
+      <h3>Select a conversation</h3>
+      <p>Choose a contact to start messaging securely</p>
+    </div>
+
+    <!-- Chat view -->
+    <div id="chatView" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="chat-header">
+        <div class="avatar avatar-0" id="chatAvatar">?</div>
+        <div class="info">
+          <div class="name" id="chatName">Contact</div>
+          <div class="status-row" id="chatStatus">
+            <span class="badge badge-cyan">E2E</span>
+            <span class="badge badge-violet">Kyber-1024</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button onclick="toggleSearch()" title="Search">&#128269;</button>
+          <button onclick="openVerify()" title="Verify" style="color:var(--secure)">&#10003;&#10003;</button>
+        </div>
+      </div>
+      <div class="search-bar" id="searchBar">
+        <span style="color:var(--iron)">&#128269;</span>
+        <input type="text" id="searchInput" placeholder="Search messages..." oninput="doSearch()">
+        <button class="close-search" onclick="toggleSearch()">&#10005;</button>
+      </div>
+      <div class="messages-area" id="messagesArea">
+        <div class="msg-notice"><span class="lock-icon">&#128274;</span> End-to-end encrypted with Double Ratchet + Kyber-1024</div>
+      </div>
+      <div class="input-bar">
+        <input type="text" class="msg-input" id="msgInput" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMessage()">
+        <button class="send-btn" onclick="sendMessage()">&#10148;</button>
+      </div>
+    </div>
+
+    <!-- Network panel -->
+    <div id="networkView" class="network-panel" style="display:none">
+      <h2>Network</h2>
+      <p class="subtitle">P2P connection status and transport information</p>
+      <div class="network-cards">
+        <div class="glass-card net-card">
+          <h3><span class="dot" id="netDot" style="background:var(--iron)"></span> Connection</h3>
+          <div class="row"><span class="label">Status</span><span class="value" id="netStatus">Offline</span></div>
+          <div class="row"><span class="label">Peers</span><span class="value" id="netPeers">0</span></div>
+          <div class="row"><span class="label">Node ID</span><span class="value" id="netNodeId" style="font-size:11px">--</span></div>
+          <div id="netControls">
+            <div class="field">
+              <label>Listen Address</label>
+              <input type="text" id="netListenAddr" class="glass-input" value="0.0.0.0:0" placeholder="0.0.0.0:0">
+            </div>
+            <div class="field">
+              <label>Bootstrap Peer</label>
+              <input type="text" id="netBootstrap" class="glass-input" placeholder="ip:port (optional)">
+            </div>
+            <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="startNetwork()">Start Network</button>
+          </div>
+          <div id="netStopBtn" style="display:none;margin-top:16px">
+            <button class="btn btn-danger btn-full" onclick="stopNetwork()">Stop Network</button>
+          </div>
+        </div>
+        <div class="glass-card net-card">
+          <h3>Transport</h3>
+          <div class="row"><span class="label">Protocol</span><span class="value">QUIC (TLS 1.3)</span></div>
+          <div class="row"><span class="label">Encryption</span><span class="value">ChaCha20-Poly1305</span></div>
+          <div class="row"><span class="label">Key Exchange</span><span class="value">Hybrid PQXDH</span></div>
+          <div class="row"><span class="label">PQ Algorithm</span><span class="value" style="color:var(--violet)">Kyber-1024</span></div>
+          <div class="row"><span class="label">NAT Traversal</span><span class="value">STUN</span></div>
+          <div class="row"><span class="label">DHT</span><span class="value">Kademlia</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="glass-card modal">
+    <div class="modal-header">
+      <h2>Settings</h2>
+      <button class="close-btn" onclick="closeModal('settingsModal')">&times;</button>
+    </div>
+    <p class="modal-desc">Configure your security and privacy preferences</p>
+    <div class="settings-section">
+      <div class="section-label">Security</div>
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-title">Screen Lock</div><div class="setting-desc">Require password on app open</div></div>
+        <label class="toggle"><input type="checkbox" checked><span class="track"></span><span class="knob"></span></label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-title">Post-Quantum Mode</div><div class="setting-desc">Kyber-1024 hybrid encryption</div></div>
+        <label class="toggle"><input type="checkbox" id="pqToggle" checked onchange="togglePQ()"><span class="track"></span><span class="knob"></span></label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-title">Auto-Delete Messages</div><div class="setting-desc">Messages expire after 24 hours</div></div>
+        <label class="toggle"><input type="checkbox"><span class="track"></span><span class="knob"></span></label>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="section-label">Privacy</div>
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-title">Read Receipts</div><div class="setting-desc">Show when messages are read</div></div>
+        <label class="toggle"><input type="checkbox"><span class="track"></span><span class="knob"></span></label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-title">Typing Indicators</div><div class="setting-desc">Show when you're typing</div></div>
+        <label class="toggle"><input type="checkbox" checked><span class="track"></span><span class="knob"></span></label>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="section-label">Account</div>
+      <button class="btn btn-ghost btn-full btn-sm" onclick="exportKeyBundle()">Export Key Bundle</button>
+      <div style="height:8px"></div>
+      <button class="btn btn-danger btn-full btn-sm" onclick="lockApp()">Lock App</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD CONTACT MODAL -->
+<div class="modal-overlay" id="addContactModal">
+  <div class="glass-card modal">
+    <div class="modal-header">
+      <h2>Add Contact</h2>
+      <button class="close-btn" onclick="closeModal('addContactModal')">&times;</button>
+    </div>
+    <p class="modal-desc">Enter a fingerprint to add a contact. Key exchange happens when you connect over the network.</p>
+    <div class="field">
+      <label>Fingerprint</label>
+      <input type="text" id="addFp" class="glass-input" placeholder="e.g. 7a8b9c4d5e6f..." style="font-family:var(--font-mono)">
+    </div>
+    <div class="field">
+      <label>Name (optional)</label>
+      <input type="text" id="addName" class="glass-input" placeholder="Contact name">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('addContactModal')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="addContact()">Add Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- VERIFY MODAL -->
+<div class="modal-overlay" id="verifyModal">
+  <div class="glass-card modal">
+    <div class="modal-header">
+      <h2>Verify Identity</h2>
+      <button class="close-btn" onclick="closeModal('verifyModal')">&times;</button>
+    </div>
+    <p class="modal-desc">Compare these fingerprints with your contact through a trusted channel (in person, phone, etc.)</p>
+    <div class="fp-box yours">
+      <div class="fp-label">Your Fingerprint</div>
+      <div class="fp-value" id="verifyMyFp">...</div>
+    </div>
+    <div class="fp-box theirs">
+      <div class="fp-label" id="verifyTheirLabel">Contact's Fingerprint</div>
+      <div class="fp-value" id="verifyTheirFp">...</div>
+    </div>
+    <div class="modal-actions" id="verifyActions">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('verifyModal')">Close</button>
+      <button class="btn btn-primary btn-sm" onclick="markVerified()">Mark as Verified</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══ STATE ═══
+const S = {
+  fingerprint: '', name: '', unlocked: false,
+  contacts: [], selectedContact: null,
+  messages: [], tab: 'chats', searchVisible: false,
+  networkStarted: false
+};
+
+// ═══ API ═══
+async function api(method, path, body) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const err = await res.text();
+    let msg = `API error ${res.status}`;
+    try { const j = JSON.parse(err); if (j.error) msg = j.error; } catch(_) { if (err) msg = err; }
+    throw new Error(msg);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+}
+
+// ═══ TOAST ═══
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ═══ INIT / BOOT ═══
+async function boot() {
+  try {
+    const status = await api('GET', '/api/status');
+    if (!status.initialized) {
+      showInitForm();
+    } else if (status.unlocked) {
+      await loadIdentity();
+      showApp();
+    } else {
+      showLoginForm();
+    }
+  } catch(e) { /* server not ready, show login */ }
+}
+
+async function doInit() {
+  const name = document.getElementById('initName').value.trim();
+  const pw = document.getElementById('initPassword').value;
+  const confirm = document.getElementById('initConfirm').value;
+  const errEl = document.getElementById('initError');
+
+  if (!name) return showError(errEl, 'Please enter a name');
+  if (pw.length < 8) return showError(errEl, 'Password must be at least 8 characters');
+  if (pw !== confirm) return showError(errEl, 'Passwords don\'t match');
+
+  try {
+    const res = await api('POST', '/api/init', { name, password: pw });
+    S.fingerprint = res.fingerprint;
+    S.name = name;
+    toast('Identity created successfully', 'success');
+    showApp();
+  } catch(e) {
+    showError(errEl, e.message);
+  }
+}
+
+async function doUnlock() {
+  const pw = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+
+  if (!pw) return showError(errEl, 'Enter your password');
+
+  try {
+    const res = await api('POST', '/api/unlock', { password: pw });
+    S.fingerprint = res.fingerprint;
+    S.name = res.name || '';
+    toast('Unlocked successfully', 'success');
+    showApp();
+  } catch(e) {
+    showError(errEl, 'Wrong password or corrupt keystore');
+  }
+}
+
+function showError(el, msg) {
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+function showInitForm() {
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('initForm').style.display = 'block';
+}
+
+function showLoginForm() {
+  document.getElementById('loginForm').style.display = 'block';
+  document.getElementById('initForm').style.display = 'none';
+}
+
+async function loadIdentity() {
+  try {
+    const id = await api('GET', '/api/identity');
+    S.fingerprint = id.fingerprint;
+    S.name = id.name || '';
+  } catch(e) {}
+}
+
+function showApp() {
+  S.unlocked = true;
+  document.getElementById('loginScreen').classList.remove('active');
+  document.getElementById('appScreen').classList.add('active');
+  updateIdentityUI();
+  loadContacts();
+}
+
+// ═══ IDENTITY UI ═══
+function updateIdentityUI() {
+  const initial = (S.name || '?')[0].toUpperCase();
+  document.getElementById('myAvatar').textContent = initial;
+  document.getElementById('myAvatar').className = `avatar avatar-${hashStr(S.name) % 6}`;
+  document.getElementById('myName').textContent = S.name || 'User';
+  const fp = S.fingerprint;
+  document.getElementById('myFingerprint').textContent = fp.length > 20
+    ? `${fp.slice(0,10)} ... ${fp.slice(-10)}` : fp;
+}
+
+function copyFingerprint() {
+  navigator.clipboard.writeText(S.fingerprint);
+  toast('Fingerprint copied!', 'info');
+}
+
+// ═══ CONTACTS ═══
+async function loadContacts() {
+  try {
+    S.contacts = await api('GET', '/api/contacts');
+  } catch(e) { S.contacts = []; }
+  renderContacts();
+}
+
+function renderContacts() {
+  const list = document.getElementById('sidebarList');
+  const noC = document.getElementById('noContacts');
+
+  if (!S.contacts.length) {
+    list.innerHTML = '';
+    list.appendChild(noC);
+    noC.style.display = 'block';
+    return;
+  }
+
+  noC.style.display = 'none';
+  let html = '<div class="sidebar-section-label">Conversations</div>';
+  S.contacts.forEach((c, i) => {
+    const name = c.name || 'Unknown';
+    const initial = name[0].toUpperCase();
+    const active = S.selectedContact === i ? 'active' : '';
+    const fpShort = (c.fingerprint || '').slice(0, 12);
+    const unread = c.unread > 0 ? `<div class="unread-badge">${c.unread}</div>` : '';
+    const verified = c.verified ? '<span class="verified">&#10003;</span>' : '';
+    html += `
+      <div class="contact-item ${active}" onclick="selectContact(${i})">
+        <div class="avatar avatar-${hashStr(name) % 6}">${initial}</div>
+        <div class="details">
+          <div class="top"><span class="contact-name">${esc(name)}</span>${verified}</div>
+          <div class="preview" style="font-family:var(--font-mono);font-size:11px;color:var(--iron)">${fpShort}</div>
+        </div>
+        <div class="meta">${unread}</div>
+      </div>`;
+  });
+  list.innerHTML = html;
+}
+
+async function selectContact(i) {
+  S.selectedContact = i;
+  renderContacts();
+  const c = S.contacts[i];
+  if (!c) return;
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('chatView').style.display = 'flex';
+  document.getElementById('networkView').style.display = 'none';
+
+  const name = c.name || 'Unknown';
+  document.getElementById('chatAvatar').textContent = name[0].toUpperCase();
+  document.getElementById('chatAvatar').className = `avatar avatar-${hashStr(name) % 6}`;
+  document.getElementById('chatName').textContent = name;
+
+  // Load messages
+  try {
+    S.messages = await api('GET', `/api/messages/${encodeURIComponent(c.fingerprint)}?limit=100`);
+    await api('POST', `/api/messages/${encodeURIComponent(c.fingerprint)}/read`);
+  } catch(e) { S.messages = []; }
+  renderMessages();
+}
+
+function renderMessages() {
+  const area = document.getElementById('messagesArea');
+  let html = '<div class="msg-notice"><span class="lock-icon">&#128274;</span> End-to-end encrypted with Double Ratchet + Kyber-1024</div>';
+  html += '<div class="msg-date">Today</div>';
+
+  const msgs = [...S.messages].reverse();
+  if (!msgs.length) {
+    html += '<div class="messages-empty"><div class="icon">&#128172;</div><p>No messages yet</p></div>';
+  }
+  msgs.forEach(m => {
+    const cls = m.outgoing ? 'sent' : 'received';
+    const content = esc(new TextDecoder().decode(new Uint8Array(m.content || [])) || m.text || '');
+    const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    const tick = m.outgoing && m.read ? '<span class="read-tick">&#10003;</span>' : '';
+    html += `
+      <div class="msg-row ${cls}">
+        <div class="msg-bubble">${content}</div>
+        <div class="msg-meta"><span>${time}</span>${tick}</div>
+      </div>`;
+  });
+  area.innerHTML = html;
+  area.scrollTop = area.scrollHeight;
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msgInput');
+  const text = input.value.trim();
+  if (!text || S.selectedContact === null) return;
+
+  const c = S.contacts[S.selectedContact];
+  try {
+    await api('POST', `/api/messages/${encodeURIComponent(c.fingerprint)}`, { text });
+    input.value = '';
+    S.messages = await api('GET', `/api/messages/${encodeURIComponent(c.fingerprint)}?limit=100`);
+    renderMessages();
+  } catch(e) {
+    toast('Send failed: ' + e.message, 'error');
+  }
+}
+
+// ═══ SEARCH ═══
+function toggleSearch() {
+  S.searchVisible = !S.searchVisible;
+  const bar = document.getElementById('searchBar');
+  bar.classList.toggle('visible', S.searchVisible);
+  if (S.searchVisible) document.getElementById('searchInput').focus();
+  else { document.getElementById('searchInput').value = ''; renderMessages(); }
+}
+
+function doSearch() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  if (!q) return renderMessages();
+  const area = document.getElementById('messagesArea');
+  const msgs = [...S.messages].reverse().filter(m => {
+    const txt = new TextDecoder().decode(new Uint8Array(m.content || [])) || m.text || '';
+    return txt.toLowerCase().includes(q);
+  });
+  let html = '';
+  msgs.forEach(m => {
+    const cls = m.outgoing ? 'sent' : 'received';
+    const content = esc(new TextDecoder().decode(new Uint8Array(m.content || [])) || m.text || '');
+    const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    html += `<div class="msg-row ${cls}"><div class="msg-bubble">${content}</div><div class="msg-meta"><span>${time}</span></div></div>`;
+  });
+  if (!html) html = '<div class="messages-empty"><p>No matches found</p></div>';
+  area.innerHTML = html;
+}
+
+// ═══ TABS ═══
+function switchTab(tab) {
+  S.tab = tab;
+  document.querySelectorAll('.sidebar-tabs .tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tab));
+
+  if (tab === 'network') {
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('chatView').style.display = 'none';
+    document.getElementById('networkView').style.display = 'block';
+    S.selectedContact = null;
+    renderContacts();
+    pollNetworkStatus();
+  } else {
+    document.getElementById('networkView').style.display = 'none';
+    if (S.selectedContact !== null) {
+      document.getElementById('chatView').style.display = 'flex';
+    } else {
+      document.getElementById('emptyState').style.display = 'flex';
+    }
+  }
+}
+
+// ═══ NETWORK ═══
+async function pollNetworkStatus() {
+  try {
+    const st = await api('GET', '/api/network/status');
+    S.networkStarted = st.started;
+    document.getElementById('netDot').style.background = st.started ? 'var(--secure)' : 'var(--iron)';
+    document.getElementById('netStatus').textContent = st.started ? 'Online' : 'Offline';
+    document.getElementById('netStatus').style.color = st.started ? 'var(--secure)' : 'var(--danger)';
+    document.getElementById('netPeers').textContent = st.peers || 0;
+    document.getElementById('netNodeId').textContent = st.node_id ? st.node_id.slice(0,20) + '...' : '--';
+    document.getElementById('netControls').style.display = st.started ? 'none' : 'block';
+    document.getElementById('netStopBtn').style.display = st.started ? 'block' : 'none';
+  } catch(e) {}
+}
+
+async function startNetwork() {
+  const addr = document.getElementById('netListenAddr').value.trim();
+  const boot = document.getElementById('netBootstrap').value.trim();
+  try {
+    await api('POST', '/api/network/start', { listen_addr: addr, bootstrap_addr: boot || null });
+    toast('Network started', 'success');
+    pollNetworkStatus();
+  } catch(e) { toast('Network error: ' + e.message, 'error'); }
+}
+
+async function stopNetwork() {
+  try {
+    await api('POST', '/api/network/stop');
+    toast('Network stopped', 'info');
+    pollNetworkStatus();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ═══ MODALS ═══
+function openSettings() { document.getElementById('settingsModal').classList.add('visible'); }
+function openAddContact() { document.getElementById('addContactModal').classList.add('visible'); }
+function openVerify() {
+  if (S.selectedContact === null) return;
+  const c = S.contacts[S.selectedContact];
+  document.getElementById('verifyMyFp').textContent = formatFp(S.fingerprint);
+  document.getElementById('verifyTheirFp').textContent = formatFp(c.fingerprint);
+  document.getElementById('verifyTheirLabel').textContent = `${c.name || 'Contact'}'s Fingerprint`;
+  document.getElementById('verifyActions').innerHTML = c.verified
+    ? '<span style="color:var(--secure);font-size:14px;font-weight:600">&#10003; Verified</span>'
+    : '<button class="btn btn-ghost btn-sm" onclick="closeModal(\'verifyModal\')">Close</button><button class="btn btn-primary btn-sm" onclick="markVerified()">Mark as Verified</button>';
+  document.getElementById('verifyModal').classList.add('visible');
+}
+function closeModal(id) { document.getElementById(id).classList.remove('visible'); }
+
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('visible'); });
+});
+
+async function addContact() {
+  const fp = document.getElementById('addFp').value.trim();
+  const name = document.getElementById('addName').value.trim();
+  if (!fp) return toast('Enter a fingerprint', 'error');
+  try {
+    await api('POST', '/api/contacts', { fingerprint: fp, name: name || null });
+    toast('Contact added', 'success');
+    closeModal('addContactModal');
+    document.getElementById('addFp').value = '';
+    document.getElementById('addName').value = '';
+    loadContacts();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function markVerified() {
+  if (S.selectedContact === null) return;
+  const c = S.contacts[S.selectedContact];
+  try {
+    await api('POST', '/api/contacts/' + encodeURIComponent(c.fingerprint) + '/verify');
+    c.verified = true;
+    toast('Contact marked as verified', 'success');
+    closeModal('verifyModal');
+    renderContacts();
+  } catch(e) {
+    toast('Verification failed: ' + e.message, 'error');
+  }
+}
+
+function togglePQ() {
+  const on = document.getElementById('pqToggle').checked;
+  document.getElementById('pqBadge').style.display = on ? 'inline-flex' : 'none';
+}
+
+async function exportKeyBundle() {
+  try {
+    const res = await api('GET', '/api/key-bundle');
+    if (res.bundle_base64) {
+      navigator.clipboard.writeText(res.bundle_base64);
+      toast('Key bundle copied to clipboard', 'info');
+    }
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function lockApp() {
+  try {
+    // Invalidate the server-side session by resetting the VeilCommClient state
+    await api('POST', '/api/lock');
+  } catch(e) {
+    // Even if the server call fails, proceed to lock the client-side UI
+    console.warn('Failed to lock server session:', e);
+  }
+  S.unlocked = false;
+  S.fingerprint = '';
+  S.name = '';
+  S.selectedContact = null;
+  S.contacts = [];
+  S.messages = [];
+  document.getElementById('appScreen').classList.remove('active');
+  document.getElementById('loginScreen').classList.add('active');
+  document.getElementById('loginPassword').value = '';
+  closeModal('settingsModal');
+  showLoginForm();
+}
+
+// ═══ UTILS ═══
+function hashStr(s) { let h=0; for(let i=0;i<(s||'').length;i++){h=((h<<5)-h)+(s||'').charCodeAt(i);h|=0} return Math.abs(h); }
+function esc(s) { const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
+function formatFp(fp) { return (fp||'').match(/.{1,4}/g)?.join(' ') || fp; }
+
+// Enter key handlers
+document.getElementById('loginPassword').addEventListener('keydown', e => { if(e.key==='Enter') doUnlock(); });
+document.getElementById('initConfirm').addEventListener('keydown', e => { if(e.key==='Enter') doInit(); });
+
+// Boot
+boot();
+</script>
+</body>
+</html>

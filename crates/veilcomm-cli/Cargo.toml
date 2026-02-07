@@ -1,0 +1,40 @@
+[package]
+name = "veilcomm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for VeilComm"
+
+[[bin]]
+name = "veilcomm"
+path = "src/main.rs"
+
+[dependencies]
+veilcomm-core = { workspace = true }
+veilcomm-network = { workspace = true }
+veilcomm-storage = { workspace = true }
+veilcomm-app = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+rpassword = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+dirs = "5.0"
+bincode = { workspace = true }

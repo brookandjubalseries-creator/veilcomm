@@ -1,0 +1,39 @@
+[package]
+name = "veilcomm-network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "P2P networking, DHT, and Tor transport for VeilComm"
+
+[dependencies]
+veilcomm-core = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Networking
+quinn = { workspace = true }
+rustls = { workspace = true }
+rcgen = { workspace = true }
+
+# Crypto
+rand = { workspace = true }
+ed25519-dalek = { workspace = true }
+blake2 = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+hex = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
