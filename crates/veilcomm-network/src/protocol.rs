@@ -21,8 +21,10 @@ pub enum WireMessage {
         signature: Vec<u8>,
         /// Random nonce used in the challenge
         nonce: Vec<u8>,
-        /// Listening address the sender wants to advertise
-        listen_addr: SocketAddr,
+        /// Listening address the sender wants to advertise (None when using Tor)
+        listen_addr: Option<SocketAddr>,
+        /// Onion address for Tor connections (e.g. "xxx.onion:port")
+        onion_address: Option<String>,
     },
 
     /// Handshake acknowledgment
@@ -32,7 +34,10 @@ pub enum WireMessage {
         signature: Vec<u8>,
         /// Random nonce used in the challenge
         nonce: Vec<u8>,
-        listen_addr: SocketAddr,
+        /// Listening address (None when using Tor)
+        listen_addr: Option<SocketAddr>,
+        /// Onion address for Tor connections
+        onion_address: Option<String>,
     },
 
     /// Encrypted application message
@@ -129,6 +134,9 @@ pub enum WireMessage {
 pub struct NodeEntry {
     pub id: NodeId,
     pub addr: SocketAddr,
+    /// Optional onion address for Tor-enabled peers
+    #[serde(default)]
+    pub onion_addr: Option<String>,
 }
 
 impl WireMessage {

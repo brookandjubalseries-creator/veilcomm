@@ -15,6 +15,9 @@ tokio = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 rcgen = { workspace = true }
+tokio-socks = { workspace = true }
+tokio-rustls = { workspace = true }
+async-trait = { workspace = true }
 
 # Crypto
 rand = { workspace = true }

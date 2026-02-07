@@ -7,7 +7,7 @@ VeilComm is a secure P2P encrypted chat application in Rust with hybrid post-qua
 - **Language**: Rust 2021 edition
 - **Crypto**: x25519-dalek, ed25519-dalek, pqcrypto-kyber, chacha20poly1305
 - **Storage**: rusqlite with Argon2-encrypted keystore
-- **Networking**: QUIC (quinn) with Kademlia DHT, STUN NAT traversal
+- **Networking**: QUIC (quinn) with Kademlia DHT, STUN NAT traversal, Tor onion routing (TCP+TLS via tokio-socks/tokio-rustls)
 - **CLI**: clap
 - **GUI**: axum web server serving embedded HTML frontend
 - **Async**: tokio
@@ -66,5 +66,5 @@ cargo clippy --all
 - Hybrid PQXDH is fully implemented: X3DH key exchange combines X25519 with Kyber-1024 KEM
 - Network layer is implemented: QUIC transport, Kademlia DHT, peer handshake, message relay
 - NAT traversal uses STUN for public address discovery
-- Tor integration is planned but not yet implemented
+- Tor integration is implemented: optional TCP+TLS transport via SOCKS5 proxy for .onion hidden service connections
 - GUI serves a glassmorphism frontend on localhost:3000 via axum

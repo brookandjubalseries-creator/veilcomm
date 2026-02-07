@@ -21,6 +21,7 @@ use veilcomm_network::{
     dht::NodeId,
     NetworkEvent, NetworkService, NetworkServiceConfig,
     transport::QuicConfig,
+    TorConfig,
 };
 use veilcomm_storage::{
     database::{Contact, Database, StoredMessage, StoredSession},
@@ -53,6 +54,10 @@ pub struct VeilCommClient {
     network: Option<NetworkService>,
     /// Our node ID in the DHT
     node_id: Option<NodeId>,
+    /// Whether Tor routing is enabled
+    tor_enabled: bool,
+    /// Our Tor onion address (if Tor is enabled)
+    onion_address: Option<String>,
 }
 
 impl VeilCommClient {
@@ -68,6 +73,8 @@ impl VeilCommClient {
             one_time_prekeys: Vec::new(),
             network: None,
             node_id: None,
+            tor_enabled: false,
+            onion_address: None,
         }
     }
 
@@ -443,6 +450,7 @@ impl VeilCommClient {
         &mut self,
         listen_addr: SocketAddr,
         bootstrap_peers: &[SocketAddr],
+        tor_config: Option<TorConfig>,
     ) -> Result<()> {
         let identity = self.identity.as_ref().ok_or(Error::NotInitialized)?;
         let node_id = self.derive_node_id()?;
@@ -450,6 +458,9 @@ impl VeilCommClient {
 
         // Derive Ed25519 SigningKey from our identity's signing key bytes
         let signing_key = SigningKey::from_bytes(&identity.signing_key_bytes());
+
+        // Track Tor status
+        self.tor_enabled = tor_config.as_ref().is_some_and(|c| c.enabled);
 
         let config = NetworkServiceConfig {
             quic_config: QuicConfig {
@@ -459,6 +470,7 @@ impl VeilCommClient {
             },
             signing_key,
             node_id,
+            tor_config,
         };
 
         let mut service = NetworkService::new(config)?;
@@ -486,6 +498,24 @@ impl VeilCommClient {
 
         self.network = Some(service);
         Ok(())
+    }
+
+    /// Set the onion address for Tor connections
+    pub fn set_onion_address(&mut self, addr: String) {
+        self.onion_address = Some(addr.clone());
+        if let Some(ref mut network) = self.network {
+            network.set_onion_address(addr);
+        }
+    }
+
+    /// Get the onion address
+    pub fn onion_address(&self) -> Option<&str> {
+        self.onion_address.as_deref()
+    }
+
+    /// Check if Tor is enabled
+    pub fn is_tor_enabled(&self) -> bool {
+        self.tor_enabled
     }
 
     /// Connect to a specific peer and establish an encrypted session
@@ -542,6 +572,11 @@ impl VeilCommClient {
         Err(Error::Network(veilcomm_network::Error::PeerNotFound(
             format!("No connected peer for {}", contact_fingerprint),
         )))
+    }
+
+    /// Get the Tor status info for the GUI
+    pub fn tor_status(&self) -> (bool, Option<String>) {
+        (self.tor_enabled, self.onion_address.clone())
     }
 
     /// Take the network event receiver for processing events in a loop

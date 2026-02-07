@@ -349,11 +349,13 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
           <div class="badges">
             <span class="badge badge-secure">Secured</span>
             <span class="badge badge-violet" id="pqBadge">PQ</span>
+            <span class="badge badge-cyan" id="torBadge" style="display:none">TOR</span>
           </div>
         </div>
         <button class="settings-btn" onclick="openSettings()" title="Settings">&#9881;</button>
       </div>
       <div class="fingerprint-bar" id="myFingerprint" onclick="copyFingerprint()" title="Click to copy">...</div>
+      <div class="fingerprint-bar" id="myOnionAddr" onclick="copyOnionAddr()" title="Click to copy onion address" style="display:none;margin-top:6px;color:var(--secure);border-color:rgba(16,185,129,0.15);font-size:10px"></div>
     </div>
     <div class="sidebar-tabs">
       <button class="tab active" data-tab="chats" onclick="switchTab('chats')">Chats</button>
@@ -430,6 +432,26 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
               <label>Bootstrap Peer</label>
               <input type="text" id="netBootstrap" class="glass-input" placeholder="ip:port (optional)">
             </div>
+            <div style="margin-top:16px;padding:14px 16px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm)">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                <div><div style="font-size:14px;font-weight:500">Tor Routing</div><div style="font-size:12px;color:var(--silver);margin-top:2px">Route through Tor for metadata protection</div></div>
+                <label class="toggle"><input type="checkbox" id="torToggle"><span class="track"></span><span class="knob"></span></label>
+              </div>
+              <div id="torFields" style="display:none">
+                <div class="field" style="margin-bottom:12px">
+                  <label>SOCKS5 Proxy</label>
+                  <input type="text" id="torSocksAddr" class="glass-input" value="127.0.0.1:9050" placeholder="127.0.0.1:9050">
+                </div>
+                <div class="field" style="margin-bottom:12px">
+                  <label>Tor Listen Port</label>
+                  <input type="text" id="torListenPort" class="glass-input" value="9051" placeholder="9051">
+                </div>
+                <div class="field">
+                  <label>Onion Address (from torrc)</label>
+                  <input type="text" id="torOnionAddr" class="glass-input" placeholder="xxxx.onion:port" style="font-family:var(--font-mono);font-size:12px">
+                </div>
+              </div>
+            </div>
             <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="startNetwork()">Start Network</button>
           </div>
           <div id="netStopBtn" style="display:none;margin-top:16px">
@@ -444,6 +466,7 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
           <div class="row"><span class="label">PQ Algorithm</span><span class="value" style="color:var(--violet)">Kyber-1024</span></div>
           <div class="row"><span class="label">NAT Traversal</span><span class="value">STUN</span></div>
           <div class="row"><span class="label">DHT</span><span class="value">Kademlia</span></div>
+          <div class="row"><span class="label">Metadata Protection</span><span class="value" id="netTorStatus" style="color:var(--iron)">Disabled</span></div>
         </div>
       </div>
     </div>
@@ -475,6 +498,10 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
     </div>
     <div class="settings-section">
       <div class="section-label">Privacy</div>
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-title">Tor Onion Routing</div><div class="setting-desc">Route connections through Tor to hide IP addresses</div></div>
+        <span class="badge badge-cyan" id="torSettingsBadge" style="display:none">Active</span>
+      </div>
       <div class="setting-row">
         <div class="setting-info"><div class="setting-title">Read Receipts</div><div class="setting-desc">Show when messages are read</div></div>
         <label class="toggle"><input type="checkbox"><span class="track"></span><span class="knob"></span></label>
@@ -545,7 +572,8 @@ const S = {
   fingerprint: '', name: '', unlocked: false,
   contacts: [], selectedContact: null,
   messages: [], tab: 'chats', searchVisible: false,
-  networkStarted: false
+  networkStarted: false,
+  torEnabled: false, onionAddress: null
 };
 
 // ═══ API ═══
@@ -670,6 +698,13 @@ function updateIdentityUI() {
 function copyFingerprint() {
   navigator.clipboard.writeText(S.fingerprint);
   toast('Fingerprint copied!', 'info');
+}
+
+function copyOnionAddr() {
+  if (S.onionAddress) {
+    navigator.clipboard.writeText(S.onionAddress);
+    toast('Onion address copied!', 'info');
+  }
 }
 
 // ═══ CONTACTS ═══
@@ -832,22 +867,49 @@ async function pollNetworkStatus() {
   try {
     const st = await api('GET', '/api/network/status');
     S.networkStarted = st.started;
+    S.torEnabled = st.tor_enabled || false;
+    S.onionAddress = st.onion_address || null;
     document.getElementById('netDot').style.background = st.started ? 'var(--secure)' : 'var(--iron)';
-    document.getElementById('netStatus').textContent = st.started ? 'Online' : 'Offline';
+    document.getElementById('netStatus').textContent = st.started ? (S.torEnabled ? 'Online (Tor)' : 'Online') : 'Offline';
     document.getElementById('netStatus').style.color = st.started ? 'var(--secure)' : 'var(--danger)';
     document.getElementById('netPeers').textContent = st.peers || 0;
     document.getElementById('netNodeId').textContent = st.node_id ? st.node_id.slice(0,20) + '...' : '--';
     document.getElementById('netControls').style.display = st.started ? 'none' : 'block';
     document.getElementById('netStopBtn').style.display = st.started ? 'block' : 'none';
+    // Tor UI updates
+    document.getElementById('torBadge').style.display = S.torEnabled ? 'inline-flex' : 'none';
+    document.getElementById('torSettingsBadge').style.display = S.torEnabled ? 'inline-flex' : 'none';
+    document.getElementById('netTorStatus').textContent = S.torEnabled ? 'Tor (onion routing)' : 'Disabled';
+    document.getElementById('netTorStatus').style.color = S.torEnabled ? 'var(--secure)' : 'var(--iron)';
+    const onionEl = document.getElementById('myOnionAddr');
+    if (S.onionAddress) {
+      onionEl.style.display = 'block';
+      onionEl.textContent = S.onionAddress;
+    } else {
+      onionEl.style.display = 'none';
+    }
   } catch(e) {}
 }
 
 async function startNetwork() {
   const addr = document.getElementById('netListenAddr').value.trim();
   const boot = document.getElementById('netBootstrap').value.trim();
+  const torEnabled = document.getElementById('torToggle').checked;
+  const body = { listen_addr: addr, bootstrap_addr: boot || null };
+  if (torEnabled) {
+    body.tor_socks_addr = document.getElementById('torSocksAddr').value.trim() || '127.0.0.1:9050';
+    body.tor_listen_port = parseInt(document.getElementById('torListenPort').value.trim()) || 9051;
+  }
   try {
-    await api('POST', '/api/network/start', { listen_addr: addr, bootstrap_addr: boot || null });
-    toast('Network started', 'success');
+    await api('POST', '/api/network/start', body);
+    toast(torEnabled ? 'Network started with Tor routing' : 'Network started', 'success');
+    // If an onion address was provided, set it on the server
+    if (torEnabled) {
+      const onion = document.getElementById('torOnionAddr').value.trim();
+      if (onion) {
+        await api('POST', '/api/network/tor', { enabled: true, onion_address: onion });
+      }
+    }
     pollNetworkStatus();
   } catch(e) { toast('Network error: ' + e.message, 'error'); }
 }
@@ -952,6 +1014,11 @@ function formatFp(fp) { return (fp||'').match(/.{1,4}/g)?.join(' ') || fp; }
 // Enter key handlers
 document.getElementById('loginPassword').addEventListener('keydown', e => { if(e.key==='Enter') doUnlock(); });
 document.getElementById('initConfirm').addEventListener('keydown', e => { if(e.key==='Enter') doInit(); });
+
+// Tor toggle handler
+document.getElementById('torToggle').addEventListener('change', function() {
+  document.getElementById('torFields').style.display = this.checked ? 'block' : 'none';
+});
 
 // Boot
 boot();

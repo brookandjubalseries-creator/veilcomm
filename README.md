@@ -34,12 +34,31 @@ VeilComm is a from-scratch Rust implementation of a secure P2P chat system that 
 | **Forward Secrecy** | Double Ratchet - unique key per message |
 | **Post-Quantum** | Hybrid X25519 + Kyber-1024 KEM |
 | **Key Exchange** | PQXDH (post-quantum Extended Triple Diffie-Hellman) |
-| **Transport** | QUIC with TLS 1.3 |
+| **Transport** | QUIC with TLS 1.3 / TCP+TLS via Tor |
+| **Metadata Protection** | Tor onion routing (optional) |
 | **Peer Discovery** | Kademlia DHT with iterative lookup |
 | **NAT Traversal** | STUN for public address discovery |
 | **Key Storage** | Argon2id-encrypted keystore (64 MiB, 3 iterations) |
 | **Identity** | Ed25519 signatures + X25519 DH + Kyber-1024 KEM |
 | **Interface** | Web GUI (glassmorphism) + CLI |
+
+## Tor Setup (Optional)
+
+VeilComm can optionally route all peer connections through Tor to hide IP addresses:
+
+1. **Install Tor**: Download from [torproject.org](https://www.torproject.org/) or install via package manager
+2. **Configure a hidden service** in your `torrc`:
+   ```
+   HiddenServiceDir /var/lib/tor/veilcomm/
+   HiddenServicePort 9051 127.0.0.1:9051
+   ```
+3. **Start Tor** and note the generated `.onion` address from `hostname` file
+4. **Start VeilComm** with Tor enabled in the GUI Network panel:
+   - Check "Tor Routing"
+   - Enter SOCKS5 proxy address (default `127.0.0.1:9050`)
+   - Enter Tor listen port (must match `torrc`, default `9051`)
+   - Enter your `.onion:port` address
+5. Share your onion address with contacts for metadata-protected messaging
 
 ## Quick Start
 
@@ -108,7 +127,8 @@ veilcomm/
 │   │
 │   ├── veilcomm-network/    # P2P networking
 │   │   ├── transport/
-│   │   │   └── quic.rs      # QUIC transport (quinn)
+│   │   │   ├── quic.rs      # QUIC transport (quinn)
+│   │   │   └── tor.rs       # Tor transport (TCP+TLS via SOCKS5)
 │   │   ├── dht/             # Kademlia DHT (20-bucket, k=20)
 │   │   ├── service.rs       # Network service orchestrator
 │   │   ├── protocol.rs      # Wire protocol (bincode-serialized)
@@ -242,7 +262,7 @@ VeilComm and Signal are currently the only messengers with production-grade hybr
 
 | App | Architecture | Metadata Exposure |
 |-----|-------------|-------------------|
-| **VeilComm** | Direct P2P (QUIC + DHT) | No server-side metadata |
+| **VeilComm** | Direct P2P (QUIC + DHT), optional Tor | No server-side metadata, optional IP hiding |
 | Signal | Centralized (AWS) | Server sees who talks to whom, when |
 | WhatsApp | Centralized (Meta) | Server sees social graph + timing |
 | Telegram | Centralized | Server sees everything in non-secret chats |
@@ -261,7 +281,7 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 
 **No professional security audit.** This is the biggest gap. Signal's protocol has been formally verified by academic researchers and audited by firms like NCC Group. VeilComm has not. "The code compiles and tests pass" is not the same as "this is secure against a nation-state adversary."
 
-**No metadata protection.** Direct QUIC connections expose both peers' IP addresses. Signal has sealed sender and private contact discovery. Session has onion routing. Briar routes through Tor. VeilComm has none of this yet -- Tor integration is planned but not implemented.
+**Metadata protection is optional.** By default, direct QUIC connections expose both peers' IP addresses. Tor onion routing can be enabled to hide IPs, but it is opt-in and requires running a Tor daemon. Signal has sealed sender and private contact discovery built-in. Session has mandatory onion routing. Briar routes through Tor by default.
 
 **No offline messaging.** Both peers must be online simultaneously. If Bob is offline, Alice's message goes nowhere. Signal, WhatsApp, Session, and Matrix all queue messages for later delivery. This is a fundamental limitation of pure P2P without relay infrastructure.
 
@@ -278,7 +298,7 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 | Post-Quantum | **Hybrid PQ** | **Hybrid PQ** | None | None | None |
 | Forward Secrecy | **Double Ratchet** | **Double Ratchet** | None | Partial | **Yes** |
 | Serverless P2P | **Yes** | No | **Yes** | Partial | **Yes** |
-| Metadata Protection | None | Good | Poor | **Strong** | **Strong** |
+| Metadata Protection | Tor optional | Good | Poor | **Strong** | **Strong** |
 | Offline Messaging | None | **Yes** | None | **Yes** | Partial |
 | Group Chat | None | **Yes** | **Yes** | **Yes** | **Yes** |
 | Security Audits | None | **Extensive** | Some | Some | **Yes** |
@@ -297,7 +317,7 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 - [x] STUN NAT traversal
 - [x] Web GUI with glassmorphism design
 - [x] CLI with full identity/contact/message management
-- [ ] Tor integration for metadata protection
+- [x] Tor integration for metadata protection
 - [ ] Offline messaging via DHT relay
 - [ ] Group chat (Sender Keys)
 - [ ] File transfer

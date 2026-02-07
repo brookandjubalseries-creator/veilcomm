@@ -132,12 +132,25 @@ struct NetworkStatusResponse {
     started: bool,
     peers: usize,
     node_id: Option<String>,
+    tor_enabled: bool,
+    onion_address: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct NetworkStartRequest {
     listen_addr: String,
     bootstrap_addr: Option<String>,
+    tor_socks_addr: Option<String>,
+    tor_listen_port: Option<u16>,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct TorToggleRequest {
+    enabled: bool,
+    socks_addr: Option<String>,
+    listen_port: Option<u16>,
+    onion_address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -318,14 +331,14 @@ async fn post_mark_read(
 async fn get_network_status(State(client): State<AppState>) -> ApiResult<NetworkStatusResponse> {
     let client = client.lock().await;
     let node_id = client.node_id().map(hex::encode);
-    // Check if network is started by seeing if we have a node_id
     let started = node_id.is_some();
-    // We can't easily get peer count without the network service being accessible,
-    // so we report 0 peers when not started
+    let (tor_enabled, onion_address) = client.tor_status();
     Ok(Json(NetworkStatusResponse {
         started,
         peers: 0,
         node_id,
+        tor_enabled,
+        onion_address,
     }))
 }
 
@@ -356,8 +369,31 @@ async fn post_network_start(
         vec![]
     };
 
-    client.start_network(listen_addr, &bootstrap_peers).await?;
+    // Build Tor config if a SOCKS address was provided
+    let tor_config = req.tor_socks_addr.as_ref().map(|socks_addr_str| {
+        let socks_addr: SocketAddr = socks_addr_str
+            .parse()
+            .unwrap_or_else(|_| "127.0.0.1:9050".parse().unwrap());
+        veilcomm_network::TorConfig {
+            socks_addr,
+            enabled: true,
+            listen_port: req.tor_listen_port.unwrap_or(9051),
+        }
+    });
+
+    client.start_network(listen_addr, &bootstrap_peers, tor_config).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn post_tor_config(
+    State(client): State<AppState>,
+    Json(req): Json<TorToggleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    if let Some(onion_addr) = req.onion_address {
+        client.set_onion_address(onion_addr);
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "tor_enabled": req.enabled })))
 }
 
 async fn post_network_stop() -> Json<serde_json::Value> {
@@ -426,6 +462,7 @@ async fn main() {
         .route("/api/network/status", get(get_network_status))
         .route("/api/network/start", post(post_network_start))
         .route("/api/network/stop", post(post_network_stop))
+        .route("/api/network/tor", post(post_tor_config))
         // Keys
         .route("/api/key-bundle", get(get_key_bundle))
         .with_state(state);

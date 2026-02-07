@@ -13,7 +13,10 @@ use quinn::{Connection, Endpoint, RecvStream, SendStream, ServerConfig, ClientCo
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tokio::sync::RwLock;
 
+use async_trait::async_trait;
+
 use crate::error::{Error, Result};
+use super::{PeerAddress, Transport, TransportStream};
 
 /// QUIC transport configuration
 pub struct QuicConfig {
@@ -303,6 +306,92 @@ impl QuicTransport {
     /// Get the QUIC endpoint (for advanced usage)
     pub fn endpoint(&self) -> Option<&Endpoint> {
         self.endpoint.as_ref()
+    }
+}
+
+/// QUIC bidirectional stream wrapped as a TransportStream
+pub struct QuicStream {
+    send: SendStream,
+    recv: RecvStream,
+}
+
+#[async_trait]
+impl TransportStream for QuicStream {
+    async fn send(&mut self, data: &[u8]) -> Result<()> {
+        write_length_prefixed(&mut self.send, data).await?;
+        self.send
+            .finish()
+            .map_err(|e| Error::Transport(format!("Finish failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn recv(&mut self) -> Result<Vec<u8>> {
+        read_length_prefixed(&mut self.recv).await
+    }
+}
+
+#[async_trait]
+impl Transport for QuicTransport {
+    async fn connect(&self, addr: &PeerAddress) -> Result<Box<dyn TransportStream>> {
+        let sock_addr = match addr {
+            PeerAddress::Direct(a) => *a,
+            PeerAddress::Onion(_) => {
+                return Err(Error::Transport(
+                    "QuicTransport does not support onion addresses".to_string(),
+                ));
+            }
+        };
+
+        let endpoint = self
+            .endpoint
+            .as_ref()
+            .ok_or_else(|| Error::Transport("Endpoint not started".to_string()))?;
+
+        let client_crypto = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
+            .with_no_client_auth();
+
+        let client_config = ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
+                .map_err(|e| Error::Transport(format!("QUIC client config error: {}", e)))?,
+        ));
+
+        let connection = endpoint
+            .connect_with(client_config, sock_addr, "veilcomm")
+            .map_err(|e| Error::Connection(format!("Connect error: {}", e)))?
+            .await
+            .map_err(|e| Error::Connection(format!("Connection failed: {}", e)))?;
+
+        self.connections
+            .write()
+            .await
+            .insert(sock_addr, connection.clone());
+
+        let (send, recv) = connection
+            .open_bi()
+            .await
+            .map_err(|e| Error::Connection(format!("Failed to open stream: {}", e)))?;
+
+        Ok(Box::new(QuicStream { send, recv }))
+    }
+
+    async fn send_and_recv(&self, addr: &PeerAddress, data: &[u8]) -> Result<Vec<u8>> {
+        match addr {
+            PeerAddress::Direct(a) => self.send(a, data).await,
+            PeerAddress::Onion(_) => Err(Error::Transport(
+                "QuicTransport does not support onion addresses".to_string(),
+            )),
+        }
+    }
+
+    async fn send_oneshot(&self, addr: &PeerAddress, data: &[u8]) -> Result<()> {
+        match addr {
+            PeerAddress::Direct(a) => QuicTransport::send_oneshot(self, a, data).await,
+            PeerAddress::Onion(_) => Err(Error::Transport(
+                "QuicTransport does not support onion addresses".to_string(),
+            )),
+        }
     }
 }
 

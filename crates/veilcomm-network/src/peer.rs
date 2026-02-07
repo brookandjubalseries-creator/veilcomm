@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::dht::NodeId;
+use crate::transport::PeerAddress;
 
 /// State of a peer connection
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,8 +29,8 @@ pub enum PeerState {
 pub struct PeerInfo {
     /// Peer's node ID
     pub node_id: NodeId,
-    /// Peer's network address
-    pub addr: SocketAddr,
+    /// Peer's network address (direct IP or onion)
+    pub addr: PeerAddress,
     /// Current connection state
     pub state: PeerState,
     /// Ed25519 identity public key bytes (set after handshake)
@@ -41,7 +42,7 @@ pub struct PeerInfo {
 }
 
 impl PeerInfo {
-    pub fn new(node_id: NodeId, addr: SocketAddr) -> Self {
+    pub fn new(node_id: NodeId, addr: PeerAddress) -> Self {
         Self {
             node_id,
             addr,
@@ -51,6 +52,11 @@ impl PeerInfo {
             reconnect_attempts: 0,
         }
     }
+
+    /// Convenience constructor from a SocketAddr (direct connection)
+    pub fn new_direct(node_id: NodeId, addr: SocketAddr) -> Self {
+        Self::new(node_id, PeerAddress::Direct(addr))
+    }
 }
 
 /// Manages peer connections and their lifecycle
@@ -59,7 +65,7 @@ pub struct ConnectionManager {
     /// Known peers indexed by node ID
     peers: Arc<RwLock<HashMap<NodeId, PeerInfo>>>,
     /// Reverse lookup: address -> node ID
-    addr_to_node: Arc<RwLock<HashMap<SocketAddr, NodeId>>>,
+    addr_to_node: Arc<RwLock<HashMap<PeerAddress, NodeId>>>,
 }
 
 impl Default for ConnectionManager {
@@ -79,7 +85,7 @@ impl ConnectionManager {
     /// Register a new peer (or update existing)
     pub async fn add_peer(&self, info: PeerInfo) {
         let node_id = info.node_id;
-        let addr = info.addr;
+        let addr = info.addr.clone();
         self.peers.write().await.insert(node_id, info);
         self.addr_to_node.write().await.insert(addr, node_id);
     }
@@ -111,14 +117,24 @@ impl ConnectionManager {
     }
 
     /// Get peer info by address
-    pub async fn get_peer_by_addr(&self, addr: &SocketAddr) -> Option<PeerInfo> {
+    pub async fn get_peer_by_addr(&self, addr: &PeerAddress) -> Option<PeerInfo> {
         let node_id = self.addr_to_node.read().await.get(addr).copied()?;
         self.peers.read().await.get(&node_id).cloned()
     }
 
+    /// Get peer info by SocketAddr (convenience for direct connections)
+    pub async fn get_peer_by_socket_addr(&self, addr: &SocketAddr) -> Option<PeerInfo> {
+        self.get_peer_by_addr(&PeerAddress::Direct(*addr)).await
+    }
+
     /// Get node ID for an address
-    pub async fn node_id_for_addr(&self, addr: &SocketAddr) -> Option<NodeId> {
+    pub async fn node_id_for_addr(&self, addr: &PeerAddress) -> Option<NodeId> {
         self.addr_to_node.read().await.get(addr).copied()
+    }
+
+    /// Get node ID for a SocketAddr (convenience for direct connections)
+    pub async fn node_id_for_socket_addr(&self, addr: &SocketAddr) -> Option<NodeId> {
+        self.node_id_for_addr(&PeerAddress::Direct(*addr)).await
     }
 
     /// Remove a peer
@@ -179,11 +195,11 @@ mod tests {
         let node_id = [1u8; 32];
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
-        let info = PeerInfo::new(node_id, addr);
+        let info = PeerInfo::new_direct(node_id, addr);
         cm.add_peer(info).await;
 
         let peer = cm.get_peer(&node_id).await.unwrap();
-        assert_eq!(peer.addr, addr);
+        assert_eq!(peer.addr, PeerAddress::Direct(addr));
         assert_eq!(peer.state, PeerState::Connecting);
     }
 
@@ -193,7 +209,7 @@ mod tests {
         let node_id = [2u8; 32];
         let addr: SocketAddr = "127.0.0.1:9090".parse().unwrap();
 
-        cm.add_peer(PeerInfo::new(node_id, addr)).await;
+        cm.add_peer(PeerInfo::new_direct(node_id, addr)).await;
         cm.set_state(&node_id, PeerState::Connected).await;
 
         let peer = cm.get_peer(&node_id).await.unwrap();
