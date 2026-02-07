@@ -219,6 +219,75 @@ Peers communicate via length-prefixed bincode-serialized messages over QUIC bidi
 | `RequestPreKeyBundle` / `PreKeyBundleResponse` | Pre-key exchange for X3DH |
 | `Ping` / `Pong` | Liveness check |
 
+## Comparison with Existing Messengers
+
+### Where VeilComm stands out
+
+**Post-Quantum Cryptography**
+
+| App | PQ Key Exchange | Approach |
+|-----|----------------|----------|
+| **VeilComm** | Yes | Hybrid X25519 + Kyber-1024 from day one |
+| Signal | Yes | Added PQXDH (Kyber-1024) in 2023, retrofitted |
+| WhatsApp | No | Signal Protocol without PQ |
+| Telegram | No | MTProto 2.0, classical only |
+| Tox | No | NaCl/libsodium, classical only |
+| Session | No | Signal Protocol fork, classical only |
+| Briar | No | Bramble protocol, classical only |
+| Matrix/Element | Experimental | Vodozemac, PQ not production-ready |
+
+VeilComm and Signal are currently the only messengers with production-grade hybrid post-quantum key exchange. VeilComm has it built into the foundation rather than added after the fact.
+
+**True Serverless P2P**
+
+| App | Architecture | Metadata Exposure |
+|-----|-------------|-------------------|
+| **VeilComm** | Direct P2P (QUIC + DHT) | No server-side metadata |
+| Signal | Centralized (AWS) | Server sees who talks to whom, when |
+| WhatsApp | Centralized (Meta) | Server sees social graph + timing |
+| Telegram | Centralized | Server sees everything in non-secret chats |
+| Tox | P2P (DHT) | Similar to VeilComm |
+| Session | Decentralized (onion-routed) | Minimal, 3-hop routing |
+| Briar | P2P (Tor/WiFi/BT) | Minimal |
+| Matrix | Federated servers | Homeserver sees metadata |
+
+No registration, no phone number, no servers to subpoena. Your identity is a cryptographic keypair, period.
+
+**Auditability**
+
+~12,000 lines of Rust. The entire cryptographic stack can be reviewed in an afternoon. Signal's codebase spans hundreds of thousands of lines across Java, Swift, and TypeScript. Smaller attack surface, easier to verify.
+
+### Where VeilComm falls short (honest assessment)
+
+**No professional security audit.** This is the biggest gap. Signal's protocol has been formally verified by academic researchers and audited by firms like NCC Group. VeilComm has not. "The code compiles and tests pass" is not the same as "this is secure against a nation-state adversary."
+
+**No metadata protection.** Direct QUIC connections expose both peers' IP addresses. Signal has sealed sender and private contact discovery. Session has onion routing. Briar routes through Tor. VeilComm has none of this yet -- Tor integration is planned but not implemented.
+
+**No offline messaging.** Both peers must be online simultaneously. If Bob is offline, Alice's message goes nowhere. Signal, WhatsApp, Session, and Matrix all queue messages for later delivery. This is a fundamental limitation of pure P2P without relay infrastructure.
+
+**No group chat.** Signal supports up to 1,000 members with Sender Keys. VeilComm is 1:1 only.
+
+**No mobile apps.** Desktop only, requires building from source.
+
+**Unencrypted message database.** The identity keystore is encrypted with Argon2id + ChaCha20-Poly1305, but the SQLite database storing messages and contacts is not encrypted at rest. Signal uses SQLCipher. This is a known gap.
+
+### Summary
+
+| Feature | VeilComm | Signal | Tox | Session | Briar |
+|---------|----------|--------|-----|---------|-------|
+| Post-Quantum | **Hybrid PQ** | **Hybrid PQ** | None | None | None |
+| Forward Secrecy | **Double Ratchet** | **Double Ratchet** | None | Partial | **Yes** |
+| Serverless P2P | **Yes** | No | **Yes** | Partial | **Yes** |
+| Metadata Protection | None | Good | Poor | **Strong** | **Strong** |
+| Offline Messaging | None | **Yes** | None | **Yes** | Partial |
+| Group Chat | None | **Yes** | **Yes** | **Yes** | **Yes** |
+| Security Audits | None | **Extensive** | Some | Some | **Yes** |
+| Mobile Apps | None | **Yes** | Partial | **Yes** | **Yes** |
+| Codebase Size | **~12K LOC** | ~500K+ LOC | ~100K LOC | ~200K LOC | ~100K LOC |
+| Language | **Rust** | Java/Swift/TS | C | Kotlin/Swift | Java |
+
+**VeilComm is a strong cryptographic foundation, not a production messenger.** It demonstrates that post-quantum P2P messaging can be built from scratch in Rust with a small, auditable codebase. It is not yet suitable for high-stakes communication -- use Signal for that until VeilComm matures.
+
 ## Roadmap
 
 - [x] Hybrid PQXDH key exchange (X25519 + Kyber-1024)
