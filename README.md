@@ -3,25 +3,33 @@
   <img src="https://img.shields.io/badge/crypto-post--quantum-blueviolet?style=flat-square" alt="Post-Quantum">
   <img src="https://img.shields.io/badge/transport-QUIC-00e5ff?style=flat-square" alt="QUIC">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/tests-80%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-107%20passing-brightgreen?style=flat-square" alt="Tests">
 </p>
 
 # VeilComm
 
-**Post-quantum encrypted peer-to-peer messaging.**
+**Post-quantum encrypted peer-to-peer messaging with offline delivery and group chat.**
 
-VeilComm is a from-scratch Rust implementation of a secure P2P chat system that combines classical elliptic-curve cryptography with Kyber-1024 lattice-based post-quantum protection. Every message is end-to-end encrypted with forward secrecy via the Double Ratchet protocol, keys are exchanged through a hybrid PQXDH handshake, and peers communicate directly over QUIC with Kademlia DHT discovery.
+VeilComm is a from-scratch Rust implementation of a secure P2P chat system that combines classical elliptic-curve cryptography with Kyber-1024 lattice-based post-quantum protection. Every message is end-to-end encrypted with forward secrecy via the Double Ratchet protocol, keys are exchanged through a hybrid PQXDH handshake, and peers communicate directly over QUIC with Kademlia DHT discovery. Messages to offline peers are stored in the DHT for later delivery, and group chats use Signal-style Sender Keys for efficient multi-party encryption.
 
 ```
-  Alice                                          Bob
+  Alice                                          Bob (offline)
     |                                              |
     |──── PQXDH (X25519 + Kyber-1024 KEM) ───────>|
     |<──── Shared Secret (BLAKE2s combined) ───────|
     |                                              |
     |──── Double Ratchet (ChaCha20-Poly1305) ─────>|
+    |──── Store in DHT (offline delivery) ────────>|  DHT
+    |                                              |   |
+    |              Bob comes online ───────────────|<──┘
     |<──── Forward-Secret Messages ────────────────|
     |                                              |
     └──────────── QUIC / Kademlia DHT ─────────────┘
+
+  Group Chat (Sender Keys)
+    Alice ──┐
+    Bob   ──┼── Encrypt once, deliver to all members
+    Carol ──┘   ChaCha20-Poly1305 + Ed25519 signatures
 ```
 
 ---
@@ -36,6 +44,8 @@ VeilComm is a from-scratch Rust implementation of a secure P2P chat system that 
 | **Key Exchange** | PQXDH (post-quantum Extended Triple Diffie-Hellman) |
 | **Transport** | QUIC with TLS 1.3 / TCP+TLS via Tor |
 | **Metadata Protection** | Tor onion routing (optional) |
+| **Offline Messaging** | DHT store-and-forward with delivery status tracking |
+| **Group Chat** | Sender Keys (up to 100 members) with chain ratchet |
 | **Peer Discovery** | Kademlia DHT with iterative lookup |
 | **NAT Traversal** | STUN for public address discovery |
 | **Key Storage** | Argon2id-encrypted keystore (64 MiB, 3 iterations) |
@@ -75,12 +85,17 @@ cargo run --release -p veilcomm-cli -- --help
 
 ### Web GUI
 
-The GUI serves a glassmorphism-styled frontend on `localhost:3000`. Create an identity, manage contacts, and chat -- all from your browser.
+The GUI serves a glassmorphism-styled frontend on `localhost:3000`. Create an identity, manage contacts, chat 1:1 or in groups, and monitor your P2P network -- all from your browser.
 
 ```bash
 cargo run -p veilcomm-gui
 # Opens http://127.0.0.1:3000 automatically
 ```
+
+Features include:
+- **Delivery status indicators**: clock (pending), cloud (queued in DHT), single check (sent), double check (delivered/read)
+- **Group chat**: create groups from your contacts, per-sender colored message labels, group info panel with member management
+- **Offline message polling**: automatically checks for queued messages every 30 seconds
 
 ### CLI
 
@@ -118,33 +133,35 @@ veilcomm/
 │   │   │   ├── keys.rs      # Ed25519 + X25519 + Kyber-1024 identity keys
 │   │   │   ├── x3dh.rs      # Hybrid PQXDH key exchange
 │   │   │   ├── ratchet.rs   # Double Ratchet with header encryption
+│   │   │   ├── sender_key.rs# Sender Keys for group chat encryption
 │   │   │   ├── aead.rs      # ChaCha20-Poly1305 AEAD
 │   │   │   ├── pq.rs        # Kyber-1024 KEM wrapper
 │   │   │   └── kdf.rs       # HKDF-SHA256 + BLAKE2b key derivation
 │   │   └── protocol/
 │   │       ├── session.rs    # Encrypted session management
-│   │       └── message.rs    # Message types & serialization
+│   │       ├── message.rs    # Message types & serialization
+│   │       └── group.rs      # Group protocol types & actions
 │   │
 │   ├── veilcomm-network/    # P2P networking
 │   │   ├── transport/
 │   │   │   ├── quic.rs      # QUIC transport (quinn)
 │   │   │   └── tor.rs       # Tor transport (TCP+TLS via SOCKS5)
 │   │   ├── dht/             # Kademlia DHT (20-bucket, k=20)
-│   │   ├── service.rs       # Network service orchestrator
+│   │   ├── service.rs       # Network service + offline messaging
 │   │   ├── protocol.rs      # Wire protocol (bincode-serialized)
 │   │   ├── peer.rs          # Connection manager + peer lifecycle
 │   │   └── nat.rs           # STUN NAT traversal
 │   │
 │   ├── veilcomm-storage/    # Persistent storage
 │   │   ├── keystore.rs      # Argon2id-encrypted identity keystore
-│   │   └── database.rs      # SQLite (contacts, messages, sessions)
+│   │   └── database.rs      # SQLite (contacts, messages, sessions, groups, sender keys)
 │   │
 │   ├── veilcomm-app/        # Application logic
 │   │   └── client.rs        # VeilCommClient API
 │   │
 │   ├── veilcomm-cli/        # Terminal interface
 │   └── veilcomm-gui/        # Web GUI (axum + embedded HTML)
-│       ├── src/main.rs       # REST API server
+│       ├── src/main.rs       # REST API server (30+ endpoints)
 │       └── static/index.html # Glassmorphism frontend
 ```
 
@@ -161,8 +178,12 @@ Identity Key (long-term, generated once)
 ├── Signed Pre-Key (rotatable)
 │   └── X25519 + Ed25519 signature
 │
-└── One-Time Pre-Keys (consumed on use, batch of 100)
-    └── X25519
+├── One-Time Pre-Keys (consumed on use, batch of 100)
+│   └── X25519
+│
+└── Sender Keys (per group, chain-ratcheted)
+    ├── Chain Key ─── symmetric key, ratcheted per message via BLAKE2b
+    └── Ed25519 SigningKey ─── message authentication
 ```
 
 ### PQXDH Key Exchange
@@ -185,6 +206,31 @@ Each message gets a unique encryption key through the Double Ratchet:
 - **Skipped Keys**: Cached up to 2000 total for out-of-order delivery
 - **AEAD**: ChaCha20-Poly1305 with associated data binding
 
+### Sender Keys (Group Chat)
+
+Group messages use Signal-style Sender Keys for efficient multi-party encryption:
+
+- Each member generates a **Sender Key** (chain key + Ed25519 signing key) per group
+- Sender Keys are distributed to all members via existing pairwise sessions
+- Messages are encrypted **once** with ChaCha20-Poly1305, then sent to all members
+- Each message is signed with Ed25519 for authentication
+- The chain key is ratcheted forward via BLAKE2b after each message (forward secrecy)
+- Out-of-order delivery supported via skipped key caching (up to 256 keys)
+- Member removal triggers a re-key: all remaining members generate new Sender Keys
+
+### Offline Messaging
+
+When a peer is offline, messages are stored in the Kademlia DHT for later retrieval:
+
+1. Sender encrypts the message normally via Double Ratchet
+2. Encrypted payload is stored in the DHT under the recipient's fingerprint
+3. Payload is replicated to the 3 closest DHT nodes for redundancy
+4. When the recipient comes online, they query the DHT for pending messages
+5. Messages are decrypted with the existing session and acknowledged (deleted from DHT)
+6. Messages expire after 7 days; per-key limit of 50 offline messages
+
+Delivery status is tracked per message: `pending` -> `sent_to_dht` -> `delivered`.
+
 ### Peer Authentication
 
 QUIC connections are authenticated at the application layer:
@@ -198,13 +244,13 @@ QUIC connections are authenticated at the application layer:
 
 - Identity keys encrypted with ChaCha20-Poly1305
 - Encryption key derived from password via Argon2id (64 MiB, 3 iterations, 4 lanes)
-- All cryptographic keys zeroized on drop (including Ed25519, X25519, Kyber-1024)
-- SQLite database for contacts, messages, and session state
+- All cryptographic keys zeroized on drop (including Ed25519, X25519, Kyber-1024, Sender Keys)
+- SQLite database for contacts, messages, sessions, groups, and sender keys
 
 ## Testing
 
 ```bash
-# Run all 80 tests
+# Run all 107 tests
 cargo test --all
 
 # Run tests for a specific crate
@@ -221,9 +267,9 @@ cargo clippy --all
 
 | Crate | Tests | Coverage |
 |-------|-------|----------|
-| `veilcomm-core` | 51 | AEAD, KDF, keys, X3DH, Double Ratchet, PQ, sessions |
-| `veilcomm-network` | 16 | QUIC transport, DHT, connection manager, protocol, STUN, NAT |
-| `veilcomm-storage` | 10 | Keystore CRUD, password change, database CRUD, sessions |
+| `veilcomm-core` | 61 | AEAD, KDF, keys, X3DH, Double Ratchet, PQ, sessions, Sender Keys, group protocol |
+| `veilcomm-network` | 28 | QUIC transport, DHT, offline messages, connection manager, protocol, STUN, NAT, Tor |
+| `veilcomm-storage` | 15 | Keystore CRUD, password change, database CRUD, sessions, groups, members, sender keys, delivery status |
 | `veilcomm-app` | 3 | Init/unlock, contacts, wrong password rejection |
 
 ## Wire Protocol
@@ -235,8 +281,13 @@ Peers communicate via length-prefixed bincode-serialized messages over QUIC bidi
 | `Handshake` / `HandshakeAck` | Identity verification with Ed25519 + nonce |
 | `EncryptedMessage` / `MessageAck` | End-to-end encrypted payload delivery |
 | `FindNode` / `FindNodeResponse` | Kademlia iterative lookup |
-| `StoreRecord` / `GetRecord` | DHT record storage (pre-key bundles, etc.) |
+| `StoreRecord` / `GetRecord` | DHT record storage (pre-key bundles, offline messages) |
 | `RequestPreKeyBundle` / `PreKeyBundleResponse` | Pre-key exchange for X3DH |
+| `GetOfflineMessages` / `GetOfflineMessagesResponse` | Retrieve queued offline messages |
+| `AckOfflineMessages` / `AckOfflineMessagesResponse` | Acknowledge and delete offline messages |
+| `GroupMessage` / `GroupMessageAck` | Sender Key encrypted group message delivery |
+| `SenderKeyDistribution` | Distribute Sender Keys to group members |
+| `GroupManagement` | Group create, add/remove member, leave, rename |
 | `Ping` / `Pong` | Liveness check |
 
 ## Comparison with Existing Messengers
@@ -275,17 +326,13 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 
 **Auditability**
 
-~12,000 lines of Rust. The entire cryptographic stack can be reviewed in an afternoon. Signal's codebase spans hundreds of thousands of lines across Java, Swift, and TypeScript. Smaller attack surface, easier to verify.
+~14,000 lines of Rust. The entire cryptographic stack can be reviewed in an afternoon. Signal's codebase spans hundreds of thousands of lines across Java, Swift, and TypeScript. Smaller attack surface, easier to verify.
 
 ### Where VeilComm falls short (honest assessment)
 
 **No professional security audit.** This is the biggest gap. Signal's protocol has been formally verified by academic researchers and audited by firms like NCC Group. VeilComm has not. "The code compiles and tests pass" is not the same as "this is secure against a nation-state adversary."
 
 **Metadata protection is optional.** By default, direct QUIC connections expose both peers' IP addresses. Tor onion routing can be enabled to hide IPs, but it is opt-in and requires running a Tor daemon. Signal has sealed sender and private contact discovery built-in. Session has mandatory onion routing. Briar routes through Tor by default.
-
-**No offline messaging.** Both peers must be online simultaneously. If Bob is offline, Alice's message goes nowhere. Signal, WhatsApp, Session, and Matrix all queue messages for later delivery. This is a fundamental limitation of pure P2P without relay infrastructure.
-
-**No group chat.** Signal supports up to 1,000 members with Sender Keys. VeilComm is 1:1 only.
 
 **No mobile apps.** Desktop only, requires building from source.
 
@@ -299,11 +346,11 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 | Forward Secrecy | **Double Ratchet** | **Double Ratchet** | None | Partial | **Yes** |
 | Serverless P2P | **Yes** | No | **Yes** | Partial | **Yes** |
 | Metadata Protection | Tor optional | Good | Poor | **Strong** | **Strong** |
-| Offline Messaging | None | **Yes** | None | **Yes** | Partial |
-| Group Chat | None | **Yes** | **Yes** | **Yes** | **Yes** |
+| Offline Messaging | **DHT relay** | **Yes** | None | **Yes** | Partial |
+| Group Chat | **Sender Keys** | **Yes** | **Yes** | **Yes** | **Yes** |
 | Security Audits | None | **Extensive** | Some | Some | **Yes** |
 | Mobile Apps | None | **Yes** | Partial | **Yes** | **Yes** |
-| Codebase Size | **~12K LOC** | ~500K+ LOC | ~100K LOC | ~200K LOC | ~100K LOC |
+| Codebase Size | **~14K LOC** | ~500K+ LOC | ~100K LOC | ~200K LOC | ~100K LOC |
 | Language | **Rust** | Java/Swift/TS | C | Kotlin/Swift | Java |
 
 **VeilComm is a strong cryptographic foundation, not a production messenger.** It demonstrates that post-quantum P2P messaging can be built from scratch in Rust with a small, auditable codebase. It is not yet suitable for high-stakes communication -- use Signal for that until VeilComm matures.
@@ -318,9 +365,10 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 - [x] Web GUI with glassmorphism design
 - [x] CLI with full identity/contact/message management
 - [x] Tor integration for metadata protection
-- [ ] Offline messaging via DHT relay
-- [ ] Group chat (Sender Keys)
+- [x] Offline messaging via DHT store-and-forward
+- [x] Group chat with Sender Keys (up to 100 members)
 - [ ] File transfer
+- [ ] Encrypted database (SQLCipher)
 - [ ] Mobile clients
 
 ## License
