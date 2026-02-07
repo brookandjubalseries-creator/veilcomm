@@ -336,7 +336,6 @@ No registration, no phone number, no servers to subpoena. Your identity is a cry
 
 **No mobile apps.** Desktop only, requires building from source.
 
-**Unencrypted message database.** The identity keystore is encrypted with Argon2id + ChaCha20-Poly1305, but the SQLite database storing messages and contacts is not encrypted at rest. Signal uses SQLCipher. This is a known gap.
 
 ### Summary
 
