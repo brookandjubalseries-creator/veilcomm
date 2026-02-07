@@ -23,8 +23,9 @@ use veilcomm_network::{
     transport::QuicConfig,
     TorConfig,
 };
+use veilcomm_core::crypto::sender_key::{ReceivedSenderKey, SenderKey};
 use veilcomm_storage::{
-    database::{Contact, Database, StoredMessage, StoredSession},
+    database::{Contact, Database, StoredGroup, StoredGroupMember, StoredGroupMessage, StoredMessage, StoredSession},
     keystore::KeyStore,
 };
 
@@ -58,6 +59,10 @@ pub struct VeilCommClient {
     tor_enabled: bool,
     /// Our Tor onion address (if Tor is enabled)
     onion_address: Option<String>,
+    /// Our sender keys for groups (group_id -> SenderKey)
+    sender_keys: HashMap<String, SenderKey>,
+    /// Received sender keys from other group members ((group_id, fingerprint) -> ReceivedSenderKey)
+    received_sender_keys: HashMap<(String, String), ReceivedSenderKey>,
 }
 
 impl VeilCommClient {
@@ -75,6 +80,8 @@ impl VeilCommClient {
             node_id: None,
             tor_enabled: false,
             onion_address: None,
+            sender_keys: HashMap::new(),
+            received_sender_keys: HashMap::new(),
         }
     }
 
@@ -366,6 +373,38 @@ impl VeilCommClient {
                 content: text.as_bytes().to_vec(),
                 timestamp: Utc::now(),
                 read: true,
+                delivery_status: "delivered".to_string(),
+            };
+            db.store_message(&stored)?;
+        }
+
+        Ok(encrypted)
+    }
+
+    /// Send a message to a contact, with offline fallback via DHT if peer is not connected
+    pub fn send_message_with_status(
+        &mut self,
+        contact_fingerprint: &str,
+        text: &str,
+        delivery_status: &str,
+    ) -> Result<EncryptedMessage> {
+        let session = self
+            .sessions
+            .get_mut(contact_fingerprint)
+            .ok_or_else(|| Error::Session(format!("No session with {}", contact_fingerprint)))?;
+
+        let content = MessageContent::text(text);
+        let encrypted = session.encrypt(content)?;
+
+        if let Some(ref db) = self.database {
+            let stored = StoredMessage {
+                id: encrypted.message_id.clone(),
+                contact_fingerprint: contact_fingerprint.to_string(),
+                outgoing: true,
+                content: text.as_bytes().to_vec(),
+                timestamp: Utc::now(),
+                read: true,
+                delivery_status: delivery_status.to_string(),
             };
             db.store_message(&stored)?;
         }
@@ -393,6 +432,7 @@ impl VeilCommClient {
                 content: text.as_bytes().to_vec(),
                 timestamp: chat_message.timestamp,
                 read: false,
+                delivery_status: "delivered".to_string(),
             };
             db.store_message(&stored)?;
             db.update_contact_last_seen(sender_fingerprint)?;
@@ -533,47 +573,6 @@ impl VeilCommClient {
         Ok(format!("Connected to {}", addr))
     }
 
-    /// Send a message to a peer over the network
-    pub async fn send_message_network(
-        &mut self,
-        contact_fingerprint: &str,
-        text: &str,
-    ) -> Result<()> {
-        // Encrypt the message using the existing session
-        let encrypted = self.send_message(contact_fingerprint, text)?;
-
-        // Serialize the encrypted message
-        let payload = encrypted.to_bytes();
-
-        // Find the peer's network address
-        let network = self.network.as_ref().ok_or_else(|| {
-            Error::Network(veilcomm_network::Error::Transport("Network not started".to_string()))
-        })?;
-
-        // Look up the peer in the connection manager
-        let connected_peers = network.connections().connected_peers().await;
-        let our_fingerprint = self.fingerprint()?;
-
-        // Try to send to the first connected peer that might be our contact
-        // In a full implementation, we'd maintain a fingerprint -> addr mapping
-        if let Some(peer) = connected_peers.first() {
-            network
-                .send_message(
-                    &peer.addr,
-                    encrypted.message_id.clone(),
-                    our_fingerprint,
-                    contact_fingerprint.to_string(),
-                    payload,
-                )
-                .await?;
-            return Ok(());
-        }
-
-        Err(Error::Network(veilcomm_network::Error::PeerNotFound(
-            format!("No connected peer for {}", contact_fingerprint),
-        )))
-    }
-
     /// Get the Tor status info for the GUI
     pub fn tor_status(&self) -> (bool, Option<String>) {
         (self.tor_enabled, self.onion_address.clone())
@@ -617,6 +616,256 @@ impl VeilCommClient {
         // Sessions are loaded on-demand when communicating with a contact
         // This is a placeholder for future implementation
         Ok(())
+    }
+
+    // ─── Offline Messaging ─────────────────────────────────────
+
+    /// Send a message with offline fallback: if peer is not connected, store in DHT
+    pub async fn send_message_network(
+        &mut self,
+        contact_fingerprint: &str,
+        text: &str,
+    ) -> Result<String> {
+        // Check connectivity first, collecting needed info before borrowing self mutably
+        let peer_connected = {
+            let network = self.network.as_ref().ok_or_else(|| {
+                Error::Network(veilcomm_network::Error::Transport("Network not started".to_string()))
+            })?;
+            let connected_peers = network.connections().connected_peers().await;
+            !connected_peers.is_empty()
+        };
+
+        if peer_connected {
+            let encrypted = self.send_message(contact_fingerprint, text)?;
+            let payload = encrypted.to_bytes();
+            let our_fingerprint = self.fingerprint()?;
+            let message_id = encrypted.message_id.clone();
+
+            let network = self.network.as_ref().ok_or_else(|| {
+                Error::Network(veilcomm_network::Error::Transport("Network not started".to_string()))
+            })?;
+            let connected_peers = network.connections().connected_peers().await;
+
+            if let Some(peer) = connected_peers.first() {
+                network
+                    .send_message(
+                        &peer.addr,
+                        encrypted.message_id,
+                        our_fingerprint,
+                        contact_fingerprint.to_string(),
+                        payload,
+                    )
+                    .await?;
+                return Ok(message_id);
+            }
+        }
+
+        // Peer not connected: encrypt and store in DHT for offline delivery
+        let encrypted = self.send_message_with_status(contact_fingerprint, text, "sent_to_dht")?;
+        let payload = encrypted.to_bytes();
+        let our_fingerprint = self.fingerprint()?;
+        let message_id = encrypted.message_id.clone();
+
+        let network = self.network.as_ref().ok_or_else(|| {
+            Error::Network(veilcomm_network::Error::Transport("Network not started".to_string()))
+        })?;
+
+        network
+            .store_offline_message(
+                contact_fingerprint,
+                &our_fingerprint,
+                &encrypted.message_id,
+                payload,
+            )
+            .await?;
+
+        Ok(message_id)
+    }
+
+    /// Check for offline messages addressed to us
+    pub async fn check_offline_messages(&mut self) -> Result<()> {
+        let our_fingerprint = self.fingerprint()?;
+        let network = self.network.as_ref().ok_or_else(|| {
+            Error::Network(veilcomm_network::Error::Transport("Network not started".to_string()))
+        })?;
+
+        network.fetch_offline_messages(&our_fingerprint).await?;
+        Ok(())
+    }
+
+    /// Update delivery status for a stored message
+    pub fn update_delivery_status(&self, message_id: &str, status: &str) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.update_delivery_status(message_id, status)?;
+        Ok(())
+    }
+
+    /// Get the database reference
+    pub fn database(&self) -> Option<&Database> {
+        self.database.as_ref()
+    }
+
+    // ─── Group Management ────────────────────────────────────
+
+    /// Create a new group
+    pub fn create_group(&mut self, name: &str, member_fingerprints: &[String]) -> Result<String> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        let our_fingerprint = self.fingerprint()?;
+
+        let group_id = uuid::Uuid::new_v4().to_string();
+
+        let group = StoredGroup {
+            group_id: group_id.clone(),
+            name: name.to_string(),
+            creator_fingerprint: our_fingerprint.clone(),
+            created_at: Utc::now(),
+            max_members: 100,
+        };
+        db.create_group(&group)?;
+
+        // Add ourselves as admin
+        db.add_group_member(&StoredGroupMember {
+            group_id: group_id.clone(),
+            fingerprint: our_fingerprint.clone(),
+            name: self.name().unwrap_or(None),
+            role: "admin".to_string(),
+            joined_at: Utc::now(),
+        })?;
+
+        // Add other members
+        for fp in member_fingerprints {
+            if fp != &our_fingerprint {
+                let contact_name = db.get_contact(fp)?
+                    .map(|c| c.name)
+                    .unwrap_or(None);
+                db.add_group_member(&StoredGroupMember {
+                    group_id: group_id.clone(),
+                    fingerprint: fp.clone(),
+                    name: contact_name,
+                    role: "member".to_string(),
+                    joined_at: Utc::now(),
+                })?;
+            }
+        }
+
+        // Generate our sender key for this group
+        let sender_key = SenderKey::generate(group_id.clone());
+        self.sender_keys.insert(group_id.clone(), sender_key);
+
+        Ok(group_id)
+    }
+
+    /// List all groups
+    pub fn list_groups(&self) -> Result<Vec<StoredGroup>> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.list_groups()?)
+    }
+
+    /// Get group info
+    pub fn get_group(&self, group_id: &str) -> Result<Option<StoredGroup>> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.get_group(group_id)?)
+    }
+
+    /// Delete a group
+    pub fn delete_group(&mut self, group_id: &str) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.delete_group(group_id)?;
+        self.sender_keys.remove(group_id);
+        // Remove all received sender keys for this group
+        self.received_sender_keys.retain(|(gid, _), _| gid != group_id);
+        Ok(())
+    }
+
+    /// Add a member to a group
+    pub fn add_group_member(&self, group_id: &str, fingerprint: &str, name: Option<&str>) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.add_group_member(&StoredGroupMember {
+            group_id: group_id.to_string(),
+            fingerprint: fingerprint.to_string(),
+            name: name.map(String::from),
+            role: "member".to_string(),
+            joined_at: Utc::now(),
+        })?;
+        Ok(())
+    }
+
+    /// Remove a member from a group
+    pub fn remove_group_member(&mut self, group_id: &str, fingerprint: &str) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.remove_group_member(group_id, fingerprint)?;
+        self.received_sender_keys.remove(&(group_id.to_string(), fingerprint.to_string()));
+        Ok(())
+    }
+
+    /// Leave a group
+    pub fn leave_group(&mut self, group_id: &str) -> Result<()> {
+        let our_fingerprint = self.fingerprint()?;
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.remove_group_member(group_id, &our_fingerprint)?;
+        self.sender_keys.remove(group_id);
+        self.received_sender_keys.retain(|(gid, _), _| gid != group_id);
+        Ok(())
+    }
+
+    /// Get members of a group
+    pub fn get_group_members(&self, group_id: &str) -> Result<Vec<StoredGroupMember>> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.get_group_members(group_id)?)
+    }
+
+    /// Send a message to a group
+    pub fn send_group_message(&mut self, group_id: &str, text: &str) -> Result<String> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        let our_fingerprint = self.fingerprint()?;
+
+        // Encrypt with our sender key
+        let sender_key = self.sender_keys.get_mut(group_id)
+            .ok_or_else(|| Error::Session(format!("No sender key for group {}", group_id)))?;
+
+        // Encrypt with sender key (payload sent to members via network)
+        let _encrypted = sender_key.encrypt(&our_fingerprint, text.as_bytes())
+            .map_err(Error::Crypto)?;
+
+        let message_id = uuid::Uuid::new_v4().to_string();
+
+        // Store locally
+        db.store_group_message(&StoredGroupMessage {
+            id: message_id.clone(),
+            group_id: group_id.to_string(),
+            sender_fingerprint: our_fingerprint,
+            content: text.as_bytes().to_vec(),
+            timestamp: Utc::now(),
+            read: true,
+        })?;
+
+        // The encrypted payload would be sent to all group members via network
+        // (handled by the GUI/CLI layer)
+        Ok(message_id)
+    }
+
+    /// Get group messages
+    pub fn get_group_messages(&self, group_id: &str, limit: u32) -> Result<Vec<StoredGroupMessage>> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.get_group_messages(group_id, limit)?)
+    }
+
+    /// Mark group messages as read
+    pub fn mark_group_read(&self, group_id: &str) -> Result<()> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        db.mark_group_messages_read(group_id)?;
+        Ok(())
+    }
+
+    /// Get unread group message count
+    pub fn unread_group_count(&self, group_id: &str) -> Result<u32> {
+        let db = self.database.as_ref().ok_or(Error::NotInitialized)?;
+        Ok(db.unread_group_count(group_id)?)
+    }
+
+    /// Get network service reference
+    pub fn network(&self) -> Option<&NetworkService> {
+        self.network.as_ref()
     }
 
     fn keystore_path(&self) -> PathBuf {

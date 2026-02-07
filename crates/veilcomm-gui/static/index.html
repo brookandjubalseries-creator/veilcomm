@@ -277,6 +277,28 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes modalIn{from{opacity:0;transform:scale(0.95) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
 
+/* ═══ DELIVERY STATUS ═══ */
+.msg-status{display:inline-flex;align-items:center;gap:3px;font-size:10px}
+.msg-status-pending{color:var(--iron)}
+.msg-status-dht{color:var(--violet)}
+.msg-status-delivered{color:var(--cyan-dim)}
+.msg-status .status-icon{font-size:11px}
+
+/* ═══ GROUP STYLING ═══ */
+.group-icon{width:42px;height:42px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;background:linear-gradient(135deg,var(--violet-dim),#6d28d9);color:var(--white);font-weight:600;font-family:var(--font-display)}
+.contact-item .member-count{font-size:10px;color:var(--iron);font-family:var(--font-mono)}
+.msg-sender-name{font-size:11px;font-weight:600;margin-bottom:2px;padding-left:4px}
+.group-header-info{font-size:12px;color:var(--silver)}
+.member-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+.member-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm)}
+.member-row .member-info{display:flex;align-items:center;gap:10px}
+.member-row .member-info .avatar{width:28px;height:28px;font-size:11px}
+.member-row .member-role{font-size:10px;color:var(--cyan);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.06em}
+.member-check{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer;transition:var(--transition)}
+.member-check:hover{background:var(--glass-surface)}
+.member-check input[type="checkbox"]{accent-color:var(--cyan);width:16px;height:16px}
+.member-check .member-label{font-size:13px}
+
 /* ═══ AVATAR COLORS ═══ */
 .avatar-0{background:linear-gradient(135deg, #1a3a4a, #0d4a5a)}
 .avatar-1{background:linear-gradient(135deg, #2d1a4a, #4a1a6a)}
@@ -369,8 +391,9 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
         <p style="font-size:11px">Add a contact to start chatting</p>
       </div>
     </div>
-    <div class="sidebar-footer">
-      <button class="btn btn-ghost btn-full btn-sm" onclick="openAddContact()">+ Add Contact</button>
+    <div class="sidebar-footer" style="display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="openAddContact()">+ Contact</button>
+      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="openCreateGroup()">+ Group</button>
     </div>
   </div>
 
@@ -394,9 +417,10 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
             <span class="badge badge-violet">Kyber-1024</span>
           </div>
         </div>
-        <div class="actions">
+        <div class="actions" id="chatActions">
           <button onclick="toggleSearch()" title="Search">&#128269;</button>
-          <button onclick="openVerify()" title="Verify" style="color:var(--secure)">&#10003;&#10003;</button>
+          <button id="verifyBtn" onclick="openVerify()" title="Verify" style="color:var(--secure)">&#10003;&#10003;</button>
+          <button id="groupInfoBtn" onclick="openGroupInfo()" title="Group Info" style="color:var(--violet);display:none">&#9881;</button>
         </div>
       </div>
       <div class="search-bar" id="searchBar">
@@ -566,6 +590,45 @@ body::after{content:'';position:fixed;inset:0;background:url("data:image/svg+xml
   </div>
 </div>
 
+<!-- CREATE GROUP MODAL -->
+<div class="modal-overlay" id="createGroupModal">
+  <div class="glass-card modal">
+    <div class="modal-header">
+      <h2>Create Group</h2>
+      <button class="close-btn" onclick="closeModal('createGroupModal')">&times;</button>
+    </div>
+    <p class="modal-desc">Create an encrypted group chat. Select contacts to add as members.</p>
+    <div class="field">
+      <label>Group Name</label>
+      <input type="text" id="groupNameInput" class="glass-input" placeholder="Enter group name" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Members</label>
+      <div id="groupMembersList"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('createGroupModal')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="createGroup()">Create Group</button>
+    </div>
+  </div>
+</div>
+
+<!-- GROUP INFO MODAL -->
+<div class="modal-overlay" id="groupInfoModal">
+  <div class="glass-card modal">
+    <div class="modal-header">
+      <h2 id="groupInfoName">Group</h2>
+      <button class="close-btn" onclick="closeModal('groupInfoModal')">&times;</button>
+    </div>
+    <p class="modal-desc" id="groupInfoDesc">Group members and settings</p>
+    <div class="member-list" id="groupInfoMembers"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger btn-sm" onclick="leaveGroup()">Leave Group</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('groupInfoModal')">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ═══ STATE ═══
 const S = {
@@ -573,7 +636,9 @@ const S = {
   contacts: [], selectedContact: null,
   messages: [], tab: 'chats', searchVisible: false,
   networkStarted: false,
-  torEnabled: false, onionAddress: null
+  torEnabled: false, onionAddress: null,
+  groups: [], selectedGroup: null,
+  groupMessages: [], isGroupChat: false
 };
 
 // ═══ API ═══
@@ -682,6 +747,8 @@ function showApp() {
   document.getElementById('appScreen').classList.add('active');
   updateIdentityUI();
   loadContacts();
+  loadGroups();
+  startOfflinePolling();
 }
 
 // ═══ IDENTITY UI ═══
@@ -719,7 +786,7 @@ function renderContacts() {
   const list = document.getElementById('sidebarList');
   const noC = document.getElementById('noContacts');
 
-  if (!S.contacts.length) {
+  if (!S.contacts.length && !S.groups.length) {
     list.innerHTML = '';
     list.appendChild(noC);
     noC.style.display = 'block';
@@ -727,29 +794,55 @@ function renderContacts() {
   }
 
   noC.style.display = 'none';
-  let html = '<div class="sidebar-section-label">Conversations</div>';
-  S.contacts.forEach((c, i) => {
-    const name = c.name || 'Unknown';
-    const initial = name[0].toUpperCase();
-    const active = S.selectedContact === i ? 'active' : '';
-    const fpShort = (c.fingerprint || '').slice(0, 12);
-    const unread = c.unread > 0 ? `<div class="unread-badge">${c.unread}</div>` : '';
-    const verified = c.verified ? '<span class="verified">&#10003;</span>' : '';
-    html += `
-      <div class="contact-item ${active}" onclick="selectContact(${i})">
-        <div class="avatar avatar-${hashStr(name) % 6}">${initial}</div>
-        <div class="details">
-          <div class="top"><span class="contact-name">${esc(name)}</span>${verified}</div>
-          <div class="preview" style="font-family:var(--font-mono);font-size:11px;color:var(--iron)">${fpShort}</div>
-        </div>
-        <div class="meta">${unread}</div>
-      </div>`;
-  });
+  let html = '';
+
+  // Groups section
+  if (S.groups.length) {
+    html += '<div class="sidebar-section-label">Groups</div>';
+    S.groups.forEach((g, i) => {
+      const active = S.isGroupChat && S.selectedGroup === i ? 'active' : '';
+      const unread = g.unread > 0 ? `<div class="unread-badge">${g.unread}</div>` : '';
+      html += `
+        <div class="contact-item ${active}" onclick="selectGroup(${i})">
+          <div class="group-icon">${esc(g.name[0]||'G')}</div>
+          <div class="details">
+            <div class="top"><span class="contact-name">${esc(g.name)}</span></div>
+            <div class="member-count">${g.member_count} member${g.member_count!==1?'s':''}</div>
+          </div>
+          <div class="meta">${unread}</div>
+        </div>`;
+    });
+  }
+
+  // Contacts section
+  if (S.contacts.length) {
+    html += '<div class="sidebar-section-label">Contacts</div>';
+    S.contacts.forEach((c, i) => {
+      const name = c.name || 'Unknown';
+      const initial = name[0].toUpperCase();
+      const active = !S.isGroupChat && S.selectedContact === i ? 'active' : '';
+      const fpShort = (c.fingerprint || '').slice(0, 12);
+      const unread = c.unread > 0 ? `<div class="unread-badge">${c.unread}</div>` : '';
+      const verified = c.verified ? '<span class="verified">&#10003;</span>' : '';
+      html += `
+        <div class="contact-item ${active}" onclick="selectContact(${i})">
+          <div class="avatar avatar-${hashStr(name) % 6}">${initial}</div>
+          <div class="details">
+            <div class="top"><span class="contact-name">${esc(name)}</span>${verified}</div>
+            <div class="preview" style="font-family:var(--font-mono);font-size:11px;color:var(--iron)">${fpShort}</div>
+          </div>
+          <div class="meta">${unread}</div>
+        </div>`;
+    });
+  }
+
   list.innerHTML = html;
 }
 
 async function selectContact(i) {
   S.selectedContact = i;
+  S.selectedGroup = null;
+  S.isGroupChat = false;
   renderContacts();
   const c = S.contacts[i];
   if (!c) return;
@@ -762,6 +855,10 @@ async function selectContact(i) {
   document.getElementById('chatAvatar').textContent = name[0].toUpperCase();
   document.getElementById('chatAvatar').className = `avatar avatar-${hashStr(name) % 6}`;
   document.getElementById('chatName').textContent = name;
+  document.getElementById('chatStatus').innerHTML =
+    '<span class="badge badge-cyan">E2E</span><span class="badge badge-violet">Kyber-1024</span>';
+  document.getElementById('verifyBtn').style.display = 'inline';
+  document.getElementById('groupInfoBtn').style.display = 'none';
 
   // Load messages
   try {
@@ -771,25 +868,52 @@ async function selectContact(i) {
   renderMessages();
 }
 
+function deliveryIcon(status, outgoing, read) {
+  if (!outgoing) return '';
+  if (read) return '<span class="read-tick">&#10003;&#10003;</span>';
+  if (status === 'sent_to_dht') return '<span class="msg-status msg-status-dht" title="Queued (peer offline)"><span class="status-icon">&#9729;</span></span>';
+  if (status === 'pending') return '<span class="msg-status msg-status-pending" title="Pending"><span class="status-icon">&#9202;</span></span>';
+  return '<span class="read-tick">&#10003;</span>';
+}
+
 function renderMessages() {
   const area = document.getElementById('messagesArea');
-  let html = '<div class="msg-notice"><span class="lock-icon">&#128274;</span> End-to-end encrypted with Double Ratchet + Kyber-1024</div>';
+  const notice = S.isGroupChat
+    ? '<div class="msg-notice"><span class="lock-icon">&#128274;</span> Encrypted with Sender Keys + ChaCha20-Poly1305</div>'
+    : '<div class="msg-notice"><span class="lock-icon">&#128274;</span> End-to-end encrypted with Double Ratchet + Kyber-1024</div>';
+  let html = notice;
   html += '<div class="msg-date">Today</div>';
 
-  const msgs = [...S.messages].reverse();
+  const msgs = S.isGroupChat ? [...S.groupMessages].reverse() : [...S.messages].reverse();
   if (!msgs.length) {
     html += '<div class="messages-empty"><div class="icon">&#128172;</div><p>No messages yet</p></div>';
   }
   msgs.forEach(m => {
-    const cls = m.outgoing ? 'sent' : 'received';
-    const content = esc(new TextDecoder().decode(new Uint8Array(m.content || [])) || m.text || '');
-    const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
-    const tick = m.outgoing && m.read ? '<span class="read-tick">&#10003;</span>' : '';
-    html += `
-      <div class="msg-row ${cls}">
-        <div class="msg-bubble">${content}</div>
-        <div class="msg-meta"><span>${time}</span>${tick}</div>
-      </div>`;
+    if (S.isGroupChat) {
+      // Group message rendering
+      const isMine = m.sender_fingerprint === S.fingerprint;
+      const cls = isMine ? 'sent' : 'received';
+      const content = esc(m.content || '');
+      const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+      const senderLabel = !isMine ? `<div class="msg-sender-name" style="color:hsl(${hashStr(m.sender_fingerprint)%360},70%,65%)">${esc(m.sender_name||m.sender_fingerprint.slice(0,8))}</div>` : '';
+      html += `
+        <div class="msg-row ${cls}">
+          ${senderLabel}
+          <div class="msg-bubble">${content}</div>
+          <div class="msg-meta"><span>${time}</span></div>
+        </div>`;
+    } else {
+      // Direct message rendering
+      const cls = m.outgoing ? 'sent' : 'received';
+      const content = esc(m.content || '');
+      const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+      const statusHtml = deliveryIcon(m.delivery_status, m.outgoing, m.read);
+      html += `
+        <div class="msg-row ${cls}">
+          <div class="msg-bubble">${content}</div>
+          <div class="msg-meta"><span>${time}</span>${statusHtml}</div>
+        </div>`;
+    }
   });
   area.innerHTML = html;
   area.scrollTop = area.scrollHeight;
@@ -798,16 +922,35 @@ function renderMessages() {
 async function sendMessage() {
   const input = document.getElementById('msgInput');
   const text = input.value.trim();
-  if (!text || S.selectedContact === null) return;
+  if (!text) return;
 
-  const c = S.contacts[S.selectedContact];
-  try {
-    await api('POST', `/api/messages/${encodeURIComponent(c.fingerprint)}`, { text });
-    input.value = '';
-    S.messages = await api('GET', `/api/messages/${encodeURIComponent(c.fingerprint)}?limit=100`);
-    renderMessages();
-  } catch(e) {
-    toast('Send failed: ' + e.message, 'error');
+  if (S.isGroupChat) {
+    // Group message
+    if (S.selectedGroup === null) return;
+    const g = S.groups[S.selectedGroup];
+    try {
+      await api('POST', `/api/groups/${encodeURIComponent(g.group_id)}/messages`, { text });
+      input.value = '';
+      S.groupMessages = await api('GET', `/api/groups/${encodeURIComponent(g.group_id)}/messages?limit=100`);
+      renderMessages();
+    } catch(e) {
+      toast('Send failed: ' + e.message, 'error');
+    }
+  } else {
+    // Direct message
+    if (S.selectedContact === null) return;
+    const c = S.contacts[S.selectedContact];
+    try {
+      const res = await api('POST', `/api/messages/${encodeURIComponent(c.fingerprint)}`, { text });
+      input.value = '';
+      if (res.delivery_status === 'sent_to_dht') {
+        toast('Message queued for delivery (peer offline)', 'info');
+      }
+      S.messages = await api('GET', `/api/messages/${encodeURIComponent(c.fingerprint)}?limit=100`);
+      renderMessages();
+    } catch(e) {
+      toast('Send failed: ' + e.message, 'error');
+    }
   }
 }
 
@@ -850,11 +993,13 @@ function switchTab(tab) {
     document.getElementById('chatView').style.display = 'none';
     document.getElementById('networkView').style.display = 'block';
     S.selectedContact = null;
+    S.selectedGroup = null;
+    S.isGroupChat = false;
     renderContacts();
     pollNetworkStatus();
   } else {
     document.getElementById('networkView').style.display = 'none';
-    if (S.selectedContact !== null) {
+    if (S.selectedContact !== null || S.selectedGroup !== null) {
       document.getElementById('chatView').style.display = 'flex';
     } else {
       document.getElementById('emptyState').style.display = 'flex';
@@ -999,11 +1144,145 @@ async function lockApp() {
   S.selectedContact = null;
   S.contacts = [];
   S.messages = [];
+  S.groups = [];
+  S.selectedGroup = null;
+  S.groupMessages = [];
+  S.isGroupChat = false;
   document.getElementById('appScreen').classList.remove('active');
   document.getElementById('loginScreen').classList.add('active');
   document.getElementById('loginPassword').value = '';
   closeModal('settingsModal');
   showLoginForm();
+}
+
+// ═══ GROUPS ═══
+async function loadGroups() {
+  try {
+    S.groups = await api('GET', '/api/groups');
+  } catch(e) { S.groups = []; }
+  renderContacts();
+}
+
+async function selectGroup(i) {
+  S.selectedGroup = i;
+  S.selectedContact = null;
+  S.isGroupChat = true;
+  renderContacts();
+  const g = S.groups[i];
+  if (!g) return;
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('chatView').style.display = 'flex';
+  document.getElementById('networkView').style.display = 'none';
+
+  // Update chat header for group
+  document.getElementById('chatAvatar').textContent = (g.name||'G')[0].toUpperCase();
+  document.getElementById('chatAvatar').className = 'group-icon';
+  document.getElementById('chatName').textContent = g.name;
+  document.getElementById('chatStatus').innerHTML =
+    `<span class="group-header-info">${g.member_count} member${g.member_count!==1?'s':''}</span>` +
+    '<span class="badge badge-violet">Sender Keys</span>';
+  document.getElementById('verifyBtn').style.display = 'none';
+  document.getElementById('groupInfoBtn').style.display = 'inline';
+
+  // Load group messages
+  try {
+    S.groupMessages = await api('GET', `/api/groups/${encodeURIComponent(g.group_id)}/messages?limit=100`);
+    await api('POST', `/api/groups/${encodeURIComponent(g.group_id)}/messages/read`);
+  } catch(e) { S.groupMessages = []; }
+  renderMessages();
+}
+
+function openCreateGroup() {
+  // Populate member checkboxes from contacts
+  const list = document.getElementById('groupMembersList');
+  let html = '';
+  S.contacts.forEach((c, i) => {
+    const name = c.name || c.fingerprint.slice(0,12);
+    html += `
+      <label class="member-check">
+        <input type="checkbox" value="${esc(c.fingerprint)}">
+        <span class="member-label">${esc(name)}</span>
+      </label>`;
+  });
+  if (!S.contacts.length) {
+    html = '<p style="color:var(--iron);font-size:13px">No contacts to add. Add contacts first.</p>';
+  }
+  list.innerHTML = html;
+  document.getElementById('groupNameInput').value = '';
+  document.getElementById('createGroupModal').classList.add('visible');
+}
+
+async function createGroup() {
+  const name = document.getElementById('groupNameInput').value.trim();
+  if (!name) return toast('Enter a group name', 'error');
+  const checks = document.querySelectorAll('#groupMembersList input[type="checkbox"]:checked');
+  const fps = Array.from(checks).map(c => c.value);
+  try {
+    await api('POST', '/api/groups', { name, member_fingerprints: fps });
+    toast('Group created', 'success');
+    closeModal('createGroupModal');
+    loadGroups();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function openGroupInfo() {
+  if (!S.isGroupChat || S.selectedGroup === null) return;
+  const g = S.groups[S.selectedGroup];
+  document.getElementById('groupInfoName').textContent = g.name;
+  document.getElementById('groupInfoDesc').textContent = `${g.member_count} members`;
+
+  api('GET', `/api/groups/${encodeURIComponent(g.group_id)}/members`).then(members => {
+    let html = '';
+    members.forEach(m => {
+      const name = m.name || m.fingerprint.slice(0,12);
+      const initial = name[0].toUpperCase();
+      const roleBadge = m.role === 'admin' ? '<span class="member-role">admin</span>' : '';
+      html += `
+        <div class="member-row">
+          <div class="member-info">
+            <div class="avatar avatar-${hashStr(name)%6}" style="width:28px;height:28px;font-size:11px">${initial}</div>
+            <span>${esc(name)}</span>
+          </div>
+          ${roleBadge}
+        </div>`;
+    });
+    document.getElementById('groupInfoMembers').innerHTML = html;
+  }).catch(() => {});
+  document.getElementById('groupInfoModal').classList.add('visible');
+}
+
+async function leaveGroup() {
+  if (!S.isGroupChat || S.selectedGroup === null) return;
+  const g = S.groups[S.selectedGroup];
+  try {
+    await api('POST', `/api/groups/${encodeURIComponent(g.group_id)}/leave`);
+    toast('Left group', 'info');
+    closeModal('groupInfoModal');
+    S.selectedGroup = null;
+    S.isGroupChat = false;
+    document.getElementById('chatView').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'flex';
+    loadGroups();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ═══ OFFLINE POLLING ═══
+let offlineInterval = null;
+function startOfflinePolling() {
+  if (offlineInterval) clearInterval(offlineInterval);
+  offlineInterval = setInterval(async () => {
+    if (!S.unlocked || !S.networkStarted) return;
+    try {
+      await api('POST', '/api/messages/check-offline');
+      // Refresh current conversation if active
+      if (S.selectedContact !== null && !S.isGroupChat) {
+        const c = S.contacts[S.selectedContact];
+        S.messages = await api('GET', `/api/messages/${encodeURIComponent(c.fingerprint)}?limit=100`);
+        renderMessages();
+      }
+    } catch(e) {}
+  }, 30000);
 }
 
 // ═══ UTILS ═══

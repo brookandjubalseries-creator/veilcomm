@@ -13,6 +13,7 @@ pub mod kdf;
 pub mod keys;
 pub mod pq;
 pub mod ratchet;
+pub mod sender_key;
 pub mod x3dh;
 
 pub use aead::{decrypt, encrypt};

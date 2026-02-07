@@ -24,6 +24,10 @@ pub enum MessageType {
     KeyRatchet,
     /// Session close
     SessionClose,
+    /// Sender key distribution for group chat
+    SenderKeyDistribution,
+    /// Group management action (create, add/remove member, etc.)
+    GroupManagement,
 }
 
 /// Message content payload

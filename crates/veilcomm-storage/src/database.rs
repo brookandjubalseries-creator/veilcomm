@@ -1,6 +1,6 @@
 //! SQLite database for VeilComm
 //!
-//! Stores contacts, messages, and session state.
+//! Stores contacts, messages, sessions, groups, and sender keys.
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -41,6 +41,7 @@ pub struct StoredMessage {
     pub content: Vec<u8>, // Encrypted content
     pub timestamp: DateTime<Utc>,
     pub read: bool,
+    pub delivery_status: String,
 }
 
 /// Stored session state
@@ -51,6 +52,49 @@ pub struct StoredSession {
     pub associated_data: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
+}
+
+/// Stored group information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredGroup {
+    pub group_id: String,
+    pub name: String,
+    pub creator_fingerprint: String,
+    pub created_at: DateTime<Utc>,
+    pub max_members: u32,
+}
+
+/// Stored group member
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredGroupMember {
+    pub group_id: String,
+    pub fingerprint: String,
+    pub name: Option<String>,
+    pub role: String,
+    pub joined_at: DateTime<Utc>,
+}
+
+/// Stored group message
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredGroupMessage {
+    pub id: String,
+    pub group_id: String,
+    pub sender_fingerprint: String,
+    pub content: Vec<u8>,
+    pub timestamp: DateTime<Utc>,
+    pub read: bool,
+}
+
+/// Stored sender key
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredSenderKey {
+    pub group_id: String,
+    pub member_fingerprint: String,
+    pub chain_key: Vec<u8>,
+    pub signing_public_key: Vec<u8>,
+    pub chain_index: u32,
+    pub skipped_keys: Vec<u8>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// VeilComm database
@@ -95,6 +139,7 @@ impl Database {
                 content BLOB NOT NULL,
                 timestamp TEXT NOT NULL,
                 read INTEGER NOT NULL DEFAULT 0,
+                delivery_status TEXT NOT NULL DEFAULT 'delivered',
                 FOREIGN KEY (contact_fingerprint) REFERENCES contacts(fingerprint)
             );
 
@@ -114,8 +159,57 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS groups (
+                group_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                creator_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                max_members INTEGER NOT NULL DEFAULT 100
+            );
+
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                name TEXT,
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at TEXT NOT NULL,
+                PRIMARY KEY (group_id, fingerprint),
+                FOREIGN KEY (group_id) REFERENCES groups(group_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS group_messages (
+                id TEXT PRIMARY KEY,
+                group_id TEXT NOT NULL,
+                sender_fingerprint TEXT NOT NULL,
+                content BLOB NOT NULL,
+                timestamp TEXT NOT NULL,
+                read INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (group_id) REFERENCES groups(group_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id);
+            CREATE INDEX IF NOT EXISTS idx_group_messages_timestamp ON group_messages(timestamp);
+
+            CREATE TABLE IF NOT EXISTS sender_keys (
+                group_id TEXT NOT NULL,
+                member_fingerprint TEXT NOT NULL,
+                chain_key BLOB NOT NULL,
+                signing_public_key BLOB NOT NULL,
+                chain_index INTEGER NOT NULL DEFAULT 0,
+                skipped_keys BLOB NOT NULL DEFAULT x'',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (group_id, member_fingerprint)
+            );
             "#,
         )?;
+
+        // Migration: add delivery_status column if not exists
+        // (for databases created before this column was added)
+        let _ = self.conn.execute(
+            "ALTER TABLE messages ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'delivered'",
+            [],
+        );
 
         Ok(())
     }
@@ -261,8 +355,8 @@ impl Database {
     pub fn store_message(&self, message: &StoredMessage) -> Result<()> {
         self.conn.execute(
             r#"
-            INSERT INTO messages (id, contact_fingerprint, outgoing, content, timestamp, read)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO messages (id, contact_fingerprint, outgoing, content, timestamp, read, delivery_status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 message.id,
@@ -271,6 +365,7 @@ impl Database {
                 message.content,
                 message.timestamp.to_rfc3339(),
                 message.read as i32,
+                message.delivery_status,
             ],
         )?;
         Ok(())
@@ -280,7 +375,7 @@ impl Database {
     pub fn get_messages(&self, contact_fingerprint: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT id, contact_fingerprint, outgoing, content, timestamp, read
+            SELECT id, contact_fingerprint, outgoing, content, timestamp, read, delivery_status
             FROM messages
             WHERE contact_fingerprint = ?1
             ORDER BY timestamp DESC
@@ -297,6 +392,7 @@ impl Database {
                     content: row.get(3)?,
                     timestamp: parse_timestamp_row(&row.get::<_, String>(4)?)?,
                     read: row.get::<_, i32>(5)? != 0,
+                    delivery_status: row.get::<_, String>(6).unwrap_or_else(|_| "delivered".to_string()),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -330,6 +426,43 @@ impl Database {
             params![before.to_rfc3339()],
         )?;
         Ok(rows as u32)
+    }
+
+    /// Update delivery status of a message
+    pub fn update_delivery_status(&self, message_id: &str, status: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+            params![status, message_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get all pending messages (for retry)
+    pub fn get_pending_messages(&self) -> Result<Vec<StoredMessage>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, contact_fingerprint, outgoing, content, timestamp, read, delivery_status
+            FROM messages
+            WHERE delivery_status IN ('pending', 'sent_to_dht')
+            ORDER BY timestamp ASC
+            "#,
+        )?;
+
+        let messages = stmt
+            .query_map([], |row| {
+                Ok(StoredMessage {
+                    id: row.get(0)?,
+                    contact_fingerprint: row.get(1)?,
+                    outgoing: row.get::<_, i32>(2)? != 0,
+                    content: row.get(3)?,
+                    timestamp: parse_timestamp_row(&row.get::<_, String>(4)?)?,
+                    read: row.get::<_, i32>(5)? != 0,
+                    delivery_status: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(messages)
     }
 
     // ==================== Sessions ====================
@@ -408,6 +541,270 @@ impl Database {
             .optional()?;
         Ok(result)
     }
+
+    // ==================== Groups ====================
+
+    /// Create a new group
+    pub fn create_group(&self, group: &StoredGroup) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO groups (group_id, name, creator_fingerprint, created_at, max_members)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                group.group_id,
+                group.name,
+                group.creator_fingerprint,
+                group.created_at.to_rfc3339(),
+                group.max_members,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get a group by ID
+    pub fn get_group(&self, group_id: &str) -> Result<Option<StoredGroup>> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT group_id, name, creator_fingerprint, created_at, max_members FROM groups WHERE group_id = ?1",
+                params![group_id],
+                |row| {
+                    Ok(StoredGroup {
+                        group_id: row.get(0)?,
+                        name: row.get(1)?,
+                        creator_fingerprint: row.get(2)?,
+                        created_at: parse_timestamp_row(&row.get::<_, String>(3)?)?,
+                        max_members: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    /// List all groups
+    pub fn list_groups(&self) -> Result<Vec<StoredGroup>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT group_id, name, creator_fingerprint, created_at, max_members FROM groups ORDER BY name",
+        )?;
+
+        let groups = stmt
+            .query_map([], |row| {
+                Ok(StoredGroup {
+                    group_id: row.get(0)?,
+                    name: row.get(1)?,
+                    creator_fingerprint: row.get(2)?,
+                    created_at: parse_timestamp_row(&row.get::<_, String>(3)?)?,
+                    max_members: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(groups)
+    }
+
+    /// Delete a group and all associated data
+    pub fn delete_group(&self, group_id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM group_messages WHERE group_id = ?1", params![group_id])?;
+        self.conn.execute("DELETE FROM group_members WHERE group_id = ?1", params![group_id])?;
+        self.conn.execute("DELETE FROM sender_keys WHERE group_id = ?1", params![group_id])?;
+        self.conn.execute("DELETE FROM groups WHERE group_id = ?1", params![group_id])?;
+        Ok(())
+    }
+
+    /// Add a member to a group
+    pub fn add_group_member(&self, member: &StoredGroupMember) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT OR REPLACE INTO group_members (group_id, fingerprint, name, role, joined_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                member.group_id,
+                member.fingerprint,
+                member.name,
+                member.role,
+                member.joined_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a member from a group
+    pub fn remove_group_member(&self, group_id: &str, fingerprint: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM group_members WHERE group_id = ?1 AND fingerprint = ?2",
+            params![group_id, fingerprint],
+        )?;
+        Ok(())
+    }
+
+    /// Get all members of a group
+    pub fn get_group_members(&self, group_id: &str) -> Result<Vec<StoredGroupMember>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT group_id, fingerprint, name, role, joined_at
+            FROM group_members WHERE group_id = ?1 ORDER BY joined_at
+            "#,
+        )?;
+
+        let members = stmt
+            .query_map(params![group_id], |row| {
+                Ok(StoredGroupMember {
+                    group_id: row.get(0)?,
+                    fingerprint: row.get(1)?,
+                    name: row.get(2)?,
+                    role: row.get(3)?,
+                    joined_at: parse_timestamp_row(&row.get::<_, String>(4)?)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(members)
+    }
+
+    /// Store a group message
+    pub fn store_group_message(&self, message: &StoredGroupMessage) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO group_messages (id, group_id, sender_fingerprint, content, timestamp, read)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                message.id,
+                message.group_id,
+                message.sender_fingerprint,
+                message.content,
+                message.timestamp.to_rfc3339(),
+                message.read as i32,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get messages for a group
+    pub fn get_group_messages(&self, group_id: &str, limit: u32) -> Result<Vec<StoredGroupMessage>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, group_id, sender_fingerprint, content, timestamp, read
+            FROM group_messages
+            WHERE group_id = ?1
+            ORDER BY timestamp DESC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let messages = stmt
+            .query_map(params![group_id, limit], |row| {
+                Ok(StoredGroupMessage {
+                    id: row.get(0)?,
+                    group_id: row.get(1)?,
+                    sender_fingerprint: row.get(2)?,
+                    content: row.get(3)?,
+                    timestamp: parse_timestamp_row(&row.get::<_, String>(4)?)?,
+                    read: row.get::<_, i32>(5)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(messages)
+    }
+
+    /// Mark group messages as read
+    pub fn mark_group_messages_read(&self, group_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE group_messages SET read = 1 WHERE group_id = ?1 AND read = 0",
+            params![group_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get unread group message count
+    pub fn unread_group_count(&self, group_id: &str) -> Result<u32> {
+        let count: u32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM group_messages WHERE group_id = ?1 AND read = 0",
+            params![group_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Store a sender key
+    pub fn store_sender_key(&self, sk: &StoredSenderKey) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT OR REPLACE INTO sender_keys
+                (group_id, member_fingerprint, chain_key, signing_public_key, chain_index, skipped_keys, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "#,
+            params![
+                sk.group_id,
+                sk.member_fingerprint,
+                sk.chain_key,
+                sk.signing_public_key,
+                sk.chain_index,
+                sk.skipped_keys,
+                sk.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get a sender key
+    pub fn get_sender_key(&self, group_id: &str, member_fingerprint: &str) -> Result<Option<StoredSenderKey>> {
+        let result = self
+            .conn
+            .query_row(
+                r#"
+                SELECT group_id, member_fingerprint, chain_key, signing_public_key, chain_index, skipped_keys, updated_at
+                FROM sender_keys WHERE group_id = ?1 AND member_fingerprint = ?2
+                "#,
+                params![group_id, member_fingerprint],
+                |row| {
+                    Ok(StoredSenderKey {
+                        group_id: row.get(0)?,
+                        member_fingerprint: row.get(1)?,
+                        chain_key: row.get(2)?,
+                        signing_public_key: row.get(3)?,
+                        chain_index: row.get(4)?,
+                        skipped_keys: row.get(5)?,
+                        updated_at: parse_timestamp_row(&row.get::<_, String>(6)?)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    /// Delete all sender keys for a group
+    pub fn delete_sender_keys_for_group(&self, group_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM sender_keys WHERE group_id = ?1",
+            params![group_id],
+        )?;
+        Ok(())
+    }
+
+    /// Update sender key state (chain_key, chain_index, skipped_keys)
+    pub fn update_sender_key_state(
+        &self,
+        group_id: &str,
+        member_fingerprint: &str,
+        chain_key: &[u8],
+        chain_index: u32,
+        skipped_keys: &[u8],
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            r#"
+            UPDATE sender_keys SET chain_key = ?1, chain_index = ?2, skipped_keys = ?3, updated_at = ?4
+            WHERE group_id = ?5 AND member_fingerprint = ?6
+            "#,
+            params![chain_key, chain_index, skipped_keys, now, group_id, member_fingerprint],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -474,6 +871,7 @@ mod tests {
                 content: format!("Message {}", i).into_bytes(),
                 timestamp: Utc::now(),
                 read: false,
+                delivery_status: "delivered".to_string(),
             };
             db.store_message(&msg).unwrap();
         }
@@ -490,6 +888,40 @@ mod tests {
         db.mark_messages_read(&contact.fingerprint).unwrap();
         let unread = db.unread_count(&contact.fingerprint).unwrap();
         assert_eq!(unread, 0);
+    }
+
+    #[test]
+    fn test_delivery_status() {
+        let db = Database::in_memory().unwrap();
+        let contact = create_test_contact();
+        db.add_contact(&contact).unwrap();
+
+        let msg = StoredMessage {
+            id: "msg_pending".to_string(),
+            contact_fingerprint: contact.fingerprint.clone(),
+            outgoing: true,
+            content: b"Hello".to_vec(),
+            timestamp: Utc::now(),
+            read: true,
+            delivery_status: "pending".to_string(),
+        };
+        db.store_message(&msg).unwrap();
+
+        // Check pending
+        let pending = db.get_pending_messages().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].delivery_status, "pending");
+
+        // Update status
+        db.update_delivery_status("msg_pending", "sent_to_dht").unwrap();
+        let pending = db.get_pending_messages().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].delivery_status, "sent_to_dht");
+
+        // Mark delivered
+        db.update_delivery_status("msg_pending", "delivered").unwrap();
+        let pending = db.get_pending_messages().unwrap();
+        assert_eq!(pending.len(), 0);
     }
 
     #[test]
@@ -536,5 +968,150 @@ mod tests {
         // Non-existent
         let missing = db.get_setting("nonexistent").unwrap();
         assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_group_crud() {
+        let db = Database::in_memory().unwrap();
+
+        let group = StoredGroup {
+            group_id: "grp-001".to_string(),
+            name: "Test Group".to_string(),
+            creator_fingerprint: "alice_fp".to_string(),
+            created_at: Utc::now(),
+            max_members: 100,
+        };
+
+        // Create
+        db.create_group(&group).unwrap();
+
+        // Get
+        let retrieved = db.get_group("grp-001").unwrap().unwrap();
+        assert_eq!(retrieved.name, "Test Group");
+        assert_eq!(retrieved.creator_fingerprint, "alice_fp");
+
+        // List
+        let groups = db.list_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+
+        // Delete
+        db.delete_group("grp-001").unwrap();
+        let deleted = db.get_group("grp-001").unwrap();
+        assert!(deleted.is_none());
+    }
+
+    #[test]
+    fn test_group_members() {
+        let db = Database::in_memory().unwrap();
+
+        let group = StoredGroup {
+            group_id: "grp-001".to_string(),
+            name: "Test Group".to_string(),
+            creator_fingerprint: "alice_fp".to_string(),
+            created_at: Utc::now(),
+            max_members: 100,
+        };
+        db.create_group(&group).unwrap();
+
+        // Add members
+        let member1 = StoredGroupMember {
+            group_id: "grp-001".to_string(),
+            fingerprint: "alice_fp".to_string(),
+            name: Some("Alice".to_string()),
+            role: "admin".to_string(),
+            joined_at: Utc::now(),
+        };
+        let member2 = StoredGroupMember {
+            group_id: "grp-001".to_string(),
+            fingerprint: "bob_fp".to_string(),
+            name: Some("Bob".to_string()),
+            role: "member".to_string(),
+            joined_at: Utc::now(),
+        };
+        db.add_group_member(&member1).unwrap();
+        db.add_group_member(&member2).unwrap();
+
+        // Get members
+        let members = db.get_group_members("grp-001").unwrap();
+        assert_eq!(members.len(), 2);
+
+        // Remove member
+        db.remove_group_member("grp-001", "bob_fp").unwrap();
+        let members = db.get_group_members("grp-001").unwrap();
+        assert_eq!(members.len(), 1);
+    }
+
+    #[test]
+    fn test_group_messages() {
+        let db = Database::in_memory().unwrap();
+
+        let group = StoredGroup {
+            group_id: "grp-001".to_string(),
+            name: "Test Group".to_string(),
+            creator_fingerprint: "alice_fp".to_string(),
+            created_at: Utc::now(),
+            max_members: 100,
+        };
+        db.create_group(&group).unwrap();
+
+        // Store messages
+        for i in 0..3 {
+            let msg = StoredGroupMessage {
+                id: format!("gmsg_{}", i),
+                group_id: "grp-001".to_string(),
+                sender_fingerprint: if i % 2 == 0 { "alice_fp".to_string() } else { "bob_fp".to_string() },
+                content: format!("Group message {}", i).into_bytes(),
+                timestamp: Utc::now(),
+                read: false,
+            };
+            db.store_group_message(&msg).unwrap();
+        }
+
+        // Get messages
+        let messages = db.get_group_messages("grp-001", 10).unwrap();
+        assert_eq!(messages.len(), 3);
+
+        // Unread count
+        let unread = db.unread_group_count("grp-001").unwrap();
+        assert_eq!(unread, 3);
+
+        // Mark read
+        db.mark_group_messages_read("grp-001").unwrap();
+        let unread = db.unread_group_count("grp-001").unwrap();
+        assert_eq!(unread, 0);
+    }
+
+    #[test]
+    fn test_sender_key_storage() {
+        let db = Database::in_memory().unwrap();
+
+        let sk = StoredSenderKey {
+            group_id: "grp-001".to_string(),
+            member_fingerprint: "alice_fp".to_string(),
+            chain_key: vec![1, 2, 3, 4],
+            signing_public_key: vec![5, 6, 7, 8],
+            chain_index: 42,
+            skipped_keys: vec![],
+            updated_at: Utc::now(),
+        };
+
+        // Store
+        db.store_sender_key(&sk).unwrap();
+
+        // Get
+        let retrieved = db.get_sender_key("grp-001", "alice_fp").unwrap().unwrap();
+        assert_eq!(retrieved.chain_key, vec![1, 2, 3, 4]);
+        assert_eq!(retrieved.chain_index, 42);
+
+        // Update state
+        db.update_sender_key_state("grp-001", "alice_fp", &[9, 10], 43, &[11, 12]).unwrap();
+        let updated = db.get_sender_key("grp-001", "alice_fp").unwrap().unwrap();
+        assert_eq!(updated.chain_key, vec![9, 10]);
+        assert_eq!(updated.chain_index, 43);
+
+        // Delete for group
+        db.delete_sender_keys_for_group("grp-001").unwrap();
+        let deleted = db.get_sender_key("grp-001", "alice_fp").unwrap();
+        assert!(deleted.is_none());
     }
 }

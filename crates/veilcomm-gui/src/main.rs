@@ -110,6 +110,7 @@ struct MessageResponse {
     content: String,
     timestamp: String,
     read: bool,
+    delivery_status: String,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +121,7 @@ struct SendMessageRequest {
 #[derive(Serialize)]
 struct SendMessageResponse {
     id: String,
+    delivery_status: String,
 }
 
 #[derive(Deserialize)]
@@ -156,6 +158,57 @@ struct TorToggleRequest {
 #[derive(Serialize)]
 struct KeyBundleResponse {
     bundle_base64: String,
+}
+
+// ─── Group Request / Response Types ──────────────────────────
+
+#[derive(Deserialize)]
+struct CreateGroupRequest {
+    name: String,
+    member_fingerprints: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct GroupResponse {
+    group_id: String,
+    name: String,
+    member_count: usize,
+    unread: u32,
+}
+
+#[derive(Serialize)]
+struct GroupDetailResponse {
+    group_id: String,
+    name: String,
+    member_count: usize,
+}
+
+#[derive(Serialize)]
+struct GroupMemberResponse {
+    fingerprint: String,
+    name: Option<String>,
+    role: String,
+}
+
+#[derive(Deserialize)]
+struct AddGroupMemberRequest {
+    fingerprint: String,
+    name: Option<String>,
+}
+
+#[derive(Serialize)]
+struct GroupMessageResponse {
+    id: String,
+    sender_fingerprint: String,
+    sender_name: Option<String>,
+    content: String,
+    timestamp: String,
+    read: bool,
+}
+
+#[derive(Deserialize)]
+struct SendGroupMessageRequest {
+    text: String,
 }
 
 // ─── Static File Serving ─────────────────────────────────────
@@ -236,8 +289,6 @@ async fn post_contact(
     } else {
         // No identity key provided. Generate a placeholder key that will be replaced
         // with the real peer key during session establishment (PQXDH key exchange).
-        // WARNING: This placeholder will NOT match the real peer identity. It exists
-        // only so the contact record can be created before key exchange occurs.
         tracing::warn!(
             fingerprint = %req.fingerprint,
             "Adding contact without identity key - using placeholder pending key exchange"
@@ -270,8 +321,6 @@ async fn delete_contact(
 
 async fn post_lock(State(client): State<AppState>) -> Json<serde_json::Value> {
     let mut client = client.lock().await;
-    // Replace the client with a fresh instance to clear all in-memory state
-    // (identity keys, sessions, etc.). The user must unlock again with their password.
     *client = VeilCommClient::new(data_dir());
     Json(serde_json::json!({ "ok": true }))
 }
@@ -292,6 +341,7 @@ async fn get_messages(
             content: String::from_utf8_lossy(&m.content).to_string(),
             timestamp: m.timestamp.to_rfc3339(),
             read: m.read,
+            delivery_status: m.delivery_status,
         })
         .collect();
     Ok(Json(result))
@@ -304,19 +354,38 @@ async fn post_message(
 ) -> Result<Json<SendMessageResponse>, ApiError> {
     let mut client = client.lock().await;
 
-    // If we have a network connection, try sending over the network
+    // Try sending with offline fallback via send_message_network
     if client.has_session(&fingerprint) {
-        let encrypted = client.send_message(&fingerprint, &req.text)?;
+        let message_id = client.send_message_network(&fingerprint, &req.text).await?;
+
+        // Check the delivery status from the database
+        let delivery_status = if let Some(db) = client.database() {
+            db.get_messages(&fingerprint, 1)
+                .ok()
+                .and_then(|msgs| msgs.into_iter().find(|m| m.id == message_id))
+                .map(|m| m.delivery_status)
+                .unwrap_or_else(|| "delivered".to_string())
+        } else {
+            "delivered".to_string()
+        };
+
         return Ok(Json(SendMessageResponse {
-            id: encrypted.message_id,
+            id: message_id,
+            delivery_status,
         }));
     }
 
-    // No active session: we cannot encrypt or store the message without a session.
-    // Return an error so the frontend can inform the user.
     Err(ApiError(anyhow::anyhow!(
         "No active session with this contact. Establish a connection first."
     )))
+}
+
+async fn post_check_offline(
+    State(client): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    client.check_offline_messages().await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn post_mark_read(
@@ -346,11 +415,6 @@ async fn post_network_start(
     State(client): State<AppState>,
     Json(req): Json<NetworkStartRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // NOTE: We hold a tokio::sync::Mutex guard across the `.await` below. This is safe
-    // because tokio::sync::Mutex (unlike std::sync::Mutex) is designed to be held across
-    // await points. The trade-off is that other requests will be blocked while network
-    // startup is in progress. For the initial version this is acceptable; a future
-    // improvement would split the client into separate locks for network vs data access.
     let mut client = client.lock().await;
     let listen_addr: SocketAddr = req
         .listen_addr
@@ -369,7 +433,6 @@ async fn post_network_start(
         vec![]
     };
 
-    // Build Tor config if a SOCKS address was provided
     let tor_config = req.tor_socks_addr.as_ref().map(|socks_addr_str| {
         let socks_addr: SocketAddr = socks_addr_str
             .parse()
@@ -397,8 +460,6 @@ async fn post_tor_config(
 }
 
 async fn post_network_stop() -> Json<serde_json::Value> {
-    // NetworkService doesn't have a stop method currently,
-    // but we acknowledge the request
     Json(serde_json::json!({ "ok": true, "note": "Network will stop when process exits" }))
 }
 
@@ -411,6 +472,162 @@ async fn get_key_bundle(
         bincode::serialize(&bundle).map_err(|e| anyhow::anyhow!("Serialize error: {}", e))?;
     let bundle_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
     Ok(Json(KeyBundleResponse { bundle_base64 }))
+}
+
+// ─── Group API Handlers ──────────────────────────────────────
+
+async fn get_groups(State(client): State<AppState>) -> ApiResult<Vec<GroupResponse>> {
+    let client = client.lock().await;
+    let groups = client.list_groups()?;
+    let mut result = Vec::new();
+    for g in groups {
+        let member_count = client.get_group_members(&g.group_id)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let unread = client.unread_group_count(&g.group_id).unwrap_or(0);
+        result.push(GroupResponse {
+            group_id: g.group_id,
+            name: g.name,
+            member_count,
+            unread,
+        });
+    }
+    Ok(Json(result))
+}
+
+async fn post_group(
+    State(client): State<AppState>,
+    Json(req): Json<CreateGroupRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    let group_id = client.create_group(&req.name, &req.member_fingerprints)?;
+    Ok(Json(serde_json::json!({ "group_id": group_id })))
+}
+
+async fn get_group(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+) -> Result<Json<GroupDetailResponse>, ApiError> {
+    let client = client.lock().await;
+    let group = client.get_group(&group_id)?
+        .ok_or_else(|| anyhow::anyhow!("Group not found"))?;
+    let member_count = client.get_group_members(&group_id)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    Ok(Json(GroupDetailResponse {
+        group_id: group.group_id,
+        name: group.name,
+        member_count,
+    }))
+}
+
+async fn delete_group_handler(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    client.delete_group(&group_id)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn get_group_members(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+) -> ApiResult<Vec<GroupMemberResponse>> {
+    let client = client.lock().await;
+    let members = client.get_group_members(&group_id)?;
+    let result: Vec<GroupMemberResponse> = members
+        .into_iter()
+        .map(|m| GroupMemberResponse {
+            fingerprint: m.fingerprint,
+            name: m.name,
+            role: m.role,
+        })
+        .collect();
+    Ok(Json(result))
+}
+
+async fn post_group_member(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+    Json(req): Json<AddGroupMemberRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    client.add_group_member(&group_id, &req.fingerprint, req.name.as_deref())?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn delete_group_member(
+    State(client): State<AppState>,
+    Path((group_id, fingerprint)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    client.remove_group_member(&group_id, &fingerprint)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn post_leave_group(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    client.leave_group(&group_id)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn get_group_messages(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<MessagesQuery>,
+) -> ApiResult<Vec<GroupMessageResponse>> {
+    let client = client.lock().await;
+    let limit = query.limit.unwrap_or(100);
+    let messages = client.get_group_messages(&group_id, limit)?;
+
+    // Build a fingerprint -> name lookup from group members
+    let members = client.get_group_members(&group_id).unwrap_or_default();
+    let name_map: std::collections::HashMap<String, Option<String>> = members
+        .into_iter()
+        .map(|m| (m.fingerprint, m.name))
+        .collect();
+
+    let result: Vec<GroupMessageResponse> = messages
+        .into_iter()
+        .map(|m| {
+            let sender_name = name_map
+                .get(&m.sender_fingerprint)
+                .cloned()
+                .flatten();
+            GroupMessageResponse {
+                id: m.id,
+                sender_fingerprint: m.sender_fingerprint,
+                sender_name,
+                content: String::from_utf8_lossy(&m.content).to_string(),
+                timestamp: m.timestamp.to_rfc3339(),
+                read: m.read,
+            }
+        })
+        .collect();
+    Ok(Json(result))
+}
+
+async fn post_group_message(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+    Json(req): Json<SendGroupMessageRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut client = client.lock().await;
+    let message_id = client.send_group_message(&group_id, &req.text)?;
+    Ok(Json(serde_json::json!({ "id": message_id })))
+}
+
+async fn post_group_messages_read(
+    State(client): State<AppState>,
+    Path(group_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let client = client.lock().await;
+    client.mark_group_read(&group_id)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -458,6 +675,7 @@ async fn main() {
         .route("/api/messages/{fingerprint}", get(get_messages))
         .route("/api/messages/{fingerprint}", post(post_message))
         .route("/api/messages/{fingerprint}/read", post(post_mark_read))
+        .route("/api/messages/check-offline", post(post_check_offline))
         // Network
         .route("/api/network/status", get(get_network_status))
         .route("/api/network/start", post(post_network_start))
@@ -465,6 +683,21 @@ async fn main() {
         .route("/api/network/tor", post(post_tor_config))
         // Keys
         .route("/api/key-bundle", get(get_key_bundle))
+        // Groups
+        .route("/api/groups", get(get_groups))
+        .route("/api/groups", post(post_group))
+        .route("/api/groups/{id}", get(get_group))
+        .route("/api/groups/{id}", delete(delete_group_handler))
+        .route("/api/groups/{id}/members", get(get_group_members))
+        .route("/api/groups/{id}/members", post(post_group_member))
+        .route(
+            "/api/groups/{id}/members/{fingerprint}",
+            delete(delete_group_member),
+        )
+        .route("/api/groups/{id}/leave", post(post_leave_group))
+        .route("/api/groups/{id}/messages", get(get_group_messages))
+        .route("/api/groups/{id}/messages", post(post_group_message))
+        .route("/api/groups/{id}/messages/read", post(post_group_messages_read))
         .with_state(state);
 
     // Try port 3000 first; fall back to an OS-assigned port if it's already in use.

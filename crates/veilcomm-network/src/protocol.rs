@@ -8,6 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::dht::NodeId;
 
+/// An offline message entry returned when fetching offline messages
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OfflineMessageEntry {
+    pub message_id: String,
+    pub sender_fingerprint: String,
+    pub payload: Vec<u8>,
+    pub timestamp: i64,
+}
+
 /// Wire message envelope exchanged between peers
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessage {
@@ -127,6 +136,58 @@ pub enum WireMessage {
         code: u32,
         message: String,
     },
+
+    // ─── Offline Messaging ───────────────────────────────────────
+
+    /// Request offline messages for a recipient
+    GetOfflineMessages {
+        recipient_fingerprint: String,
+    },
+
+    /// Response with offline messages
+    GetOfflineMessagesResponse {
+        messages: Vec<OfflineMessageEntry>,
+    },
+
+    /// Acknowledge (delete) offline messages
+    AckOfflineMessages {
+        recipient_fingerprint: String,
+        message_ids: Vec<String>,
+    },
+
+    /// Response to offline message acknowledgment
+    AckOfflineMessagesResponse {
+        removed_count: u32,
+    },
+
+    // ─── Group Messaging ─────────────────────────────────────────
+
+    /// A group message sent to all members
+    GroupMessage {
+        group_id: String,
+        sender_id: String,
+        payload: Vec<u8>,
+    },
+
+    /// Acknowledgment for a group message
+    GroupMessageAck {
+        group_id: String,
+        message_id: String,
+    },
+
+    /// Distribute a sender key to group members
+    SenderKeyDistribution {
+        group_id: String,
+        sender_fingerprint: String,
+        encrypted_key_data: Vec<u8>,
+    },
+
+    /// Group management action (create, add/remove member, etc.)
+    GroupManagement {
+        group_id: String,
+        encrypted_action: Vec<u8>,
+        sender_fingerprint: String,
+    },
 }
 
 /// A node entry for DHT responses
@@ -182,6 +243,60 @@ mod tests {
             assert_eq!(sender_id, "abc123");
             assert_eq!(recipient_id, "def456");
             assert_eq!(payload, vec![1, 2, 3, 4]);
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_offline_messages_roundtrip() {
+        let msg = WireMessage::GetOfflineMessages {
+            recipient_fingerprint: "bob_fp".to_string(),
+        };
+        let bytes = msg.to_bytes().unwrap();
+        let decoded = WireMessage::from_bytes(&bytes).unwrap();
+        if let WireMessage::GetOfflineMessages { recipient_fingerprint } = decoded {
+            assert_eq!(recipient_fingerprint, "bob_fp");
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_offline_messages_response_roundtrip() {
+        let msg = WireMessage::GetOfflineMessagesResponse {
+            messages: vec![
+                OfflineMessageEntry {
+                    message_id: "msg-001".to_string(),
+                    sender_fingerprint: "alice".to_string(),
+                    payload: vec![1, 2, 3],
+                    timestamp: 1000,
+                },
+            ],
+        };
+        let bytes = msg.to_bytes().unwrap();
+        let decoded = WireMessage::from_bytes(&bytes).unwrap();
+        if let WireMessage::GetOfflineMessagesResponse { messages } = decoded {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].message_id, "msg-001");
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_group_message_roundtrip() {
+        let msg = WireMessage::GroupMessage {
+            group_id: "grp-001".to_string(),
+            sender_id: "alice".to_string(),
+            payload: vec![10, 20, 30],
+        };
+        let bytes = msg.to_bytes().unwrap();
+        let decoded = WireMessage::from_bytes(&bytes).unwrap();
+        if let WireMessage::GroupMessage { group_id, sender_id, payload } = decoded {
+            assert_eq!(group_id, "grp-001");
+            assert_eq!(sender_id, "alice");
+            assert_eq!(payload, vec![10, 20, 30]);
         } else {
             panic!("Wrong variant");
         }

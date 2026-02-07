@@ -12,8 +12,11 @@ use serde::{Deserialize, Serialize};
 
 // error types available via crate::error if needed
 
-/// Maximum number of records allowed per key
-const MAX_RECORDS_PER_KEY: usize = 10;
+/// Maximum number of pre-key records per key
+const MAX_PREKEY_PER_KEY: usize = 5;
+
+/// Maximum number of offline messages per recipient key
+const MAX_OFFLINE_MSG_PER_KEY: usize = 50;
 
 /// Maximum total number of records across all keys
 const MAX_TOTAL_RECORDS: usize = 10000;
@@ -35,7 +38,13 @@ pub enum DhtRecord {
     /// Pre-key bundle for a user
     PreKeyBundle(Vec<u8>),
     /// Offline message for a user
-    OfflineMessage(Vec<u8>),
+    OfflineMessage {
+        sender_fingerprint: String,
+        recipient_fingerprint: String,
+        payload: Vec<u8>,
+        timestamp: i64,
+        message_id: String,
+    },
     /// Node address record
     NodeAddr(SocketAddr),
 }
@@ -115,7 +124,7 @@ impl KademliaDht {
         all_nodes
     }
 
-    /// Store a record locally (with rate limiting)
+    /// Store a record locally (with per-type rate limiting)
     pub fn store(&mut self, key: NodeId, record: DhtRecord) {
         // Check total record limit across all keys
         let total: usize = self.storage.values().map(|v| v.len()).sum();
@@ -126,9 +135,36 @@ impl KademliaDht {
 
         let records = self.storage.entry(key).or_default();
 
-        // If per-key limit exceeded, remove the oldest record to make room
-        if records.len() >= MAX_RECORDS_PER_KEY {
-            records.remove(0);
+        match &record {
+            DhtRecord::PreKeyBundle(_) => {
+                // Count existing pre-key records for this key
+                let prekey_count = records.iter().filter(|r| matches!(r, DhtRecord::PreKeyBundle(_))).count();
+                if prekey_count >= MAX_PREKEY_PER_KEY {
+                    // Remove the oldest pre-key record
+                    if let Some(pos) = records.iter().position(|r| matches!(r, DhtRecord::PreKeyBundle(_))) {
+                        records.remove(pos);
+                    }
+                }
+            }
+            DhtRecord::OfflineMessage { .. } => {
+                // Count existing offline message records for this key
+                let msg_count = records.iter().filter(|r| matches!(r, DhtRecord::OfflineMessage { .. })).count();
+                if msg_count >= MAX_OFFLINE_MSG_PER_KEY {
+                    // Remove the oldest offline message (oldest-first eviction)
+                    if let Some(pos) = records.iter().position(|r| matches!(r, DhtRecord::OfflineMessage { .. })) {
+                        records.remove(pos);
+                    }
+                }
+            }
+            DhtRecord::NodeAddr(_) => {
+                // Simple limit: max 10 node addr records per key
+                let addr_count = records.iter().filter(|r| matches!(r, DhtRecord::NodeAddr(_))).count();
+                if addr_count >= 10 {
+                    if let Some(pos) = records.iter().position(|r| matches!(r, DhtRecord::NodeAddr(_))) {
+                        records.remove(pos);
+                    }
+                }
+            }
         }
 
         records.push(record);
@@ -137,6 +173,52 @@ impl KademliaDht {
     /// Get records for a key
     pub fn get(&self, key: &NodeId) -> Option<&Vec<DhtRecord>> {
         self.storage.get(key)
+    }
+
+    /// Remove an offline message by message_id from a specific key.
+    /// Returns true if a message was removed.
+    pub fn remove_by_id(&mut self, key: &NodeId, message_id: &str) -> bool {
+        if let Some(records) = self.storage.get_mut(key) {
+            let before = records.len();
+            records.retain(|r| {
+                if let DhtRecord::OfflineMessage { message_id: mid, .. } = r {
+                    mid != message_id
+                } else {
+                    true
+                }
+            });
+            records.len() < before
+        } else {
+            false
+        }
+    }
+
+    /// Purge expired offline messages older than max_age_secs
+    pub fn purge_expired(&mut self, max_age_secs: i64) {
+        let now = chrono::Utc::now().timestamp();
+        let cutoff = now - max_age_secs;
+
+        for records in self.storage.values_mut() {
+            records.retain(|r| {
+                if let DhtRecord::OfflineMessage { timestamp, .. } = r {
+                    *timestamp > cutoff
+                } else {
+                    true
+                }
+            });
+        }
+
+        // Remove empty keys
+        self.storage.retain(|_, v| !v.is_empty());
+    }
+
+    /// Get offline messages for a recipient
+    pub fn get_offline_messages(&self, key: &NodeId) -> Vec<&DhtRecord> {
+        if let Some(records) = self.storage.get(key) {
+            records.iter().filter(|r| matches!(r, DhtRecord::OfflineMessage { .. })).collect()
+        } else {
+            vec![]
+        }
     }
 
     /// Number of known nodes
@@ -232,5 +314,127 @@ mod tests {
         let mut c = [0u8; 32];
         c[0] = 0xff;
         assert_eq!(xor_distance(&a, &c)[0], 0xff);
+    }
+
+    #[test]
+    fn test_offline_message_store_retrieve() {
+        let mut dht = KademliaDht::new([0u8; 32]);
+        let key = [1u8; 32];
+
+        dht.store(key, DhtRecord::OfflineMessage {
+            sender_fingerprint: "alice".to_string(),
+            recipient_fingerprint: "bob".to_string(),
+            payload: vec![1, 2, 3],
+            timestamp: 1000,
+            message_id: "msg-001".to_string(),
+        });
+
+        dht.store(key, DhtRecord::OfflineMessage {
+            sender_fingerprint: "alice".to_string(),
+            recipient_fingerprint: "bob".to_string(),
+            payload: vec![4, 5, 6],
+            timestamp: 2000,
+            message_id: "msg-002".to_string(),
+        });
+
+        let msgs = dht.get_offline_messages(&key);
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[test]
+    fn test_offline_message_per_key_limit() {
+        let mut dht = KademliaDht::new([0u8; 32]);
+        let key = [1u8; 32];
+
+        // Store more than the limit
+        for i in 0..55 {
+            dht.store(key, DhtRecord::OfflineMessage {
+                sender_fingerprint: "alice".to_string(),
+                recipient_fingerprint: "bob".to_string(),
+                payload: vec![i as u8],
+                timestamp: i as i64,
+                message_id: format!("msg-{:03}", i),
+            });
+        }
+
+        let msgs = dht.get_offline_messages(&key);
+        assert_eq!(msgs.len(), MAX_OFFLINE_MSG_PER_KEY);
+    }
+
+    #[test]
+    fn test_remove_by_id() {
+        let mut dht = KademliaDht::new([0u8; 32]);
+        let key = [1u8; 32];
+
+        dht.store(key, DhtRecord::OfflineMessage {
+            sender_fingerprint: "alice".to_string(),
+            recipient_fingerprint: "bob".to_string(),
+            payload: vec![1, 2, 3],
+            timestamp: 1000,
+            message_id: "msg-001".to_string(),
+        });
+
+        dht.store(key, DhtRecord::OfflineMessage {
+            sender_fingerprint: "alice".to_string(),
+            recipient_fingerprint: "bob".to_string(),
+            payload: vec![4, 5, 6],
+            timestamp: 2000,
+            message_id: "msg-002".to_string(),
+        });
+
+        assert!(dht.remove_by_id(&key, "msg-001"));
+        assert!(!dht.remove_by_id(&key, "msg-001")); // already removed
+
+        let msgs = dht.get_offline_messages(&key);
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn test_purge_expired() {
+        let mut dht = KademliaDht::new([0u8; 32]);
+        let key = [1u8; 32];
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Old message (expired)
+        dht.store(key, DhtRecord::OfflineMessage {
+            sender_fingerprint: "alice".to_string(),
+            recipient_fingerprint: "bob".to_string(),
+            payload: vec![1],
+            timestamp: now - 86400 * 8, // 8 days ago
+            message_id: "old".to_string(),
+        });
+
+        // Recent message (not expired)
+        dht.store(key, DhtRecord::OfflineMessage {
+            sender_fingerprint: "alice".to_string(),
+            recipient_fingerprint: "bob".to_string(),
+            payload: vec![2],
+            timestamp: now - 3600, // 1 hour ago
+            message_id: "new".to_string(),
+        });
+
+        // Purge messages older than 7 days
+        dht.purge_expired(86400 * 7);
+
+        let msgs = dht.get_offline_messages(&key);
+        assert_eq!(msgs.len(), 1);
+        if let DhtRecord::OfflineMessage { message_id, .. } = msgs[0] {
+            assert_eq!(message_id, "new");
+        }
+    }
+
+    #[test]
+    fn test_prekey_per_key_limit() {
+        let mut dht = KademliaDht::new([0u8; 32]);
+        let key = [1u8; 32];
+
+        for i in 0..8 {
+            dht.store(key, DhtRecord::PreKeyBundle(vec![i]));
+        }
+
+        let records = dht.get(&key).unwrap();
+        let prekey_count = records.iter().filter(|r| matches!(r, DhtRecord::PreKeyBundle(_))).count();
+        assert_eq!(prekey_count, MAX_PREKEY_PER_KEY);
     }
 }

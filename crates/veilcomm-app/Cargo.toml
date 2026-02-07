@@ -29,6 +29,7 @@ anyhow = { workspace = true }
 # Utilities
 chrono = { workspace = true }
 hex = { workspace = true }
+uuid = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

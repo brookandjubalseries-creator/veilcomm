@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, RwLock};
 use crate::dht::{DhtRecord, KademliaDht, NodeId, NodeInfo};
 use crate::error::{Error, Result};
 use crate::peer::{ConnectionManager, PeerInfo, PeerState};
-use crate::protocol::{NodeEntry, WireMessage};
+use crate::protocol::{NodeEntry, OfflineMessageEntry, WireMessage};
 use crate::transport::quic::{
     read_length_prefixed, write_length_prefixed, QuicConfig, QuicTransport,
 };
@@ -48,6 +48,16 @@ pub enum NetworkEvent {
     DhtLookupComplete {
         key: NodeId,
         values: Vec<Vec<u8>>,
+    },
+    /// Offline messages were received from DHT
+    OfflineMessagesReceived {
+        messages: Vec<OfflineMessageEntry>,
+    },
+    /// A group message was received
+    GroupMessageReceived {
+        group_id: String,
+        sender_id: String,
+        payload: Vec<u8>,
     },
 }
 
@@ -703,6 +713,185 @@ impl NetworkService {
     pub fn transport(&self) -> &QuicTransport {
         &self.transport
     }
+
+    // ─── Offline Messaging ─────────────────────────────────────
+
+    /// Store an offline message in the DHT, replicated to closest nodes
+    pub async fn store_offline_message(
+        &self,
+        recipient_fingerprint: &str,
+        sender_fingerprint: &str,
+        message_id: &str,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        let key = fingerprint_to_node_id(recipient_fingerprint);
+        let timestamp = chrono::Utc::now().timestamp();
+
+        // Store locally
+        self.dht.write().await.store(
+            key,
+            DhtRecord::OfflineMessage {
+                sender_fingerprint: sender_fingerprint.to_string(),
+                recipient_fingerprint: recipient_fingerprint.to_string(),
+                payload: payload.clone(),
+                timestamp,
+                message_id: message_id.to_string(),
+            },
+        );
+
+        // Replicate to 3 closest nodes
+        let closest = self.dht.read().await.find_closest(&key, 3);
+        let store_data = bincode::serialize(&(sender_fingerprint, recipient_fingerprint, message_id, &payload, timestamp))
+            .unwrap_or_default();
+        for node in closest {
+            let msg = WireMessage::StoreRecord {
+                key,
+                value: store_data.clone(),
+                record_type: "offline_message".to_string(),
+            };
+            if let Ok(data) = msg.to_bytes() {
+                let _ = self.transport.send_oneshot(&node.addr, &data).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fetch offline messages for our fingerprint from DHT
+    pub async fn fetch_offline_messages(&self, our_fingerprint: &str) -> Result<()> {
+        let key = fingerprint_to_node_id(our_fingerprint);
+
+        // Check local DHT
+        let mut all_messages = Vec::new();
+        {
+            let dht = self.dht.read().await;
+            let offline = dht.get_offline_messages(&key);
+            for record in offline {
+                if let DhtRecord::OfflineMessage {
+                    sender_fingerprint,
+                    payload,
+                    timestamp,
+                    message_id,
+                    ..
+                } = record
+                {
+                    all_messages.push(OfflineMessageEntry {
+                        message_id: message_id.clone(),
+                        sender_fingerprint: sender_fingerprint.clone(),
+                        payload: payload.clone(),
+                        timestamp: *timestamp,
+                    });
+                }
+            }
+        }
+
+        // Also query closest nodes
+        let closest = self.dht.read().await.find_closest(&key, 3);
+        for node in closest {
+            let msg = WireMessage::GetOfflineMessages {
+                recipient_fingerprint: our_fingerprint.to_string(),
+            };
+            if let Ok(data) = msg.to_bytes() {
+                if let Ok(response_data) = self.transport.send(&node.addr, &data).await {
+                    if let Ok(WireMessage::GetOfflineMessagesResponse { messages }) =
+                        WireMessage::from_bytes(&response_data)
+                    {
+                        for m in messages {
+                            // Deduplicate by message_id
+                            if !all_messages.iter().any(|existing| existing.message_id == m.message_id) {
+                                all_messages.push(m);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !all_messages.is_empty() {
+            let _ = self.event_tx.send(NetworkEvent::OfflineMessagesReceived {
+                messages: all_messages,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Acknowledge (delete) offline messages from DHT
+    pub async fn ack_offline_messages(
+        &self,
+        our_fingerprint: &str,
+        message_ids: Vec<String>,
+    ) -> Result<()> {
+        let key = fingerprint_to_node_id(our_fingerprint);
+
+        // Remove locally
+        {
+            let mut dht = self.dht.write().await;
+            for mid in &message_ids {
+                dht.remove_by_id(&key, mid);
+            }
+        }
+
+        // Tell closest nodes to delete
+        let closest = self.dht.read().await.find_closest(&key, 3);
+        for node in closest {
+            let msg = WireMessage::AckOfflineMessages {
+                recipient_fingerprint: our_fingerprint.to_string(),
+                message_ids: message_ids.clone(),
+            };
+            if let Ok(data) = msg.to_bytes() {
+                let _ = self.transport.send_oneshot(&node.addr, &data).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Start a periodic DHT expiry task that purges old offline messages
+    pub fn spawn_dht_expiry_task(&self) {
+        let dht = self.dht.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                // Purge messages older than 7 days
+                dht.write().await.purge_expired(86400 * 7);
+            }
+        });
+    }
+
+    // ─── Group Messaging ───────────────────────────────────────
+
+    /// Send a group message to all specified members
+    pub async fn send_group_message(
+        &self,
+        members: &[PeerInfo],
+        group_id: &str,
+        sender_id: &str,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        let msg = WireMessage::GroupMessage {
+            group_id: group_id.to_string(),
+            sender_id: sender_id.to_string(),
+            payload,
+        };
+        let data = msg.to_bytes().map_err(Error::Serialization)?;
+
+        for member in members {
+            match &member.addr {
+                PeerAddress::Direct(sock_addr) => {
+                    let _ = self.transport.send_oneshot(sock_addr, &data).await;
+                }
+                PeerAddress::Onion(_) => {
+                    if let Some(ref tor) = self.tor_transport {
+                        let _ = tor.send_oneshot(&member.addr, &data).await;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Handle an incoming wire message and optionally return a response
@@ -832,7 +1021,30 @@ async fn handle_wire_message(
         WireMessage::StoreRecord { key, value, record_type } => {
             let record = match record_type.as_str() {
                 "prekey_bundle" => DhtRecord::PreKeyBundle(value),
-                "offline_message" => DhtRecord::OfflineMessage(value),
+                "offline_message" => {
+                    // Try to deserialize the offline message metadata
+                    match bincode::deserialize::<(String, String, String, Vec<u8>, i64)>(&value) {
+                        Ok((sender_fp, recipient_fp, msg_id, payload, timestamp)) => {
+                            DhtRecord::OfflineMessage {
+                                sender_fingerprint: sender_fp,
+                                recipient_fingerprint: recipient_fp,
+                                payload,
+                                timestamp,
+                                message_id: msg_id,
+                            }
+                        }
+                        Err(_) => {
+                            // Fallback: store as a simple offline message
+                            DhtRecord::OfflineMessage {
+                                sender_fingerprint: String::new(),
+                                recipient_fingerprint: String::new(),
+                                payload: value,
+                                timestamp: chrono::Utc::now().timestamp(),
+                                message_id: uuid::Uuid::new_v4().to_string(),
+                            }
+                        }
+                    }
+                }
                 "node_addr" => {
                     // Attempt to deserialize the value as a SocketAddr
                     match bincode::deserialize::<SocketAddr>(&value) {
@@ -875,6 +1087,98 @@ async fn handle_wire_message(
         }
 
         WireMessage::Ping { nonce } => Some(WireMessage::Pong { nonce }),
+
+        // ─── Offline Messaging ─────────────────────────────────
+
+        WireMessage::GetOfflineMessages { recipient_fingerprint } => {
+            let key = fingerprint_to_node_id(&recipient_fingerprint);
+            let dht_read = dht.read().await;
+            let offline = dht_read.get_offline_messages(&key);
+            let messages: Vec<OfflineMessageEntry> = offline
+                .iter()
+                .filter_map(|r| {
+                    if let DhtRecord::OfflineMessage {
+                        sender_fingerprint,
+                        payload,
+                        timestamp,
+                        message_id,
+                        ..
+                    } = r
+                    {
+                        Some(OfflineMessageEntry {
+                            message_id: message_id.clone(),
+                            sender_fingerprint: sender_fingerprint.clone(),
+                            payload: payload.clone(),
+                            timestamp: *timestamp,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Some(WireMessage::GetOfflineMessagesResponse { messages })
+        }
+
+        WireMessage::AckOfflineMessages {
+            recipient_fingerprint,
+            message_ids,
+        } => {
+            let key = fingerprint_to_node_id(&recipient_fingerprint);
+            let mut dht_write = dht.write().await;
+            let mut removed = 0u32;
+            for mid in &message_ids {
+                if dht_write.remove_by_id(&key, mid) {
+                    removed += 1;
+                }
+            }
+            Some(WireMessage::AckOfflineMessagesResponse {
+                removed_count: removed,
+            })
+        }
+
+        // ─── Group Messaging ───────────────────────────────────
+
+        WireMessage::GroupMessage {
+            group_id,
+            sender_id,
+            payload,
+        } => {
+            let _ = event_tx.send(NetworkEvent::GroupMessageReceived {
+                group_id: group_id.clone(),
+                sender_id: sender_id.clone(),
+                payload,
+            });
+            Some(WireMessage::GroupMessageAck {
+                group_id,
+                message_id: uuid::Uuid::new_v4().to_string(),
+            })
+        }
+
+        WireMessage::SenderKeyDistribution {
+            group_id: _,
+            sender_fingerprint,
+            encrypted_key_data,
+        } => {
+            let _ = event_tx.send(NetworkEvent::MessageReceived {
+                sender_id: sender_fingerprint,
+                recipient_id: String::new(),
+                payload: encrypted_key_data,
+            });
+            None
+        }
+
+        WireMessage::GroupManagement {
+            group_id: _,
+            encrypted_action,
+            sender_fingerprint,
+        } => {
+            let _ = event_tx.send(NetworkEvent::MessageReceived {
+                sender_id: sender_fingerprint,
+                recipient_id: String::new(),
+                payload: encrypted_action,
+            });
+            None
+        }
 
         _ => None,
     }

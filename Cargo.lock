@@ -2258,6 +2258,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
  "veilcomm-core",
  "veilcomm-network",
  "veilcomm-storage",
